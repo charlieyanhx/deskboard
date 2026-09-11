@@ -261,9 +261,23 @@ class Book:
     def snapshot(self) -> dict:
         return {"totals": self.totals(), "positions": self.position_rows(), "legs": self.leg_rows()}
 
-    def state_hash(self) -> str:
+    def state_hash(self, decimals: int = 6) -> str:
+        """SHA-256 of the snapshot with floats rounded to `decimals`.
+
+        Bit-identical within a platform; across platforms libm differences move the last
+        bits of norm.cdf / Brent, so the cross-platform guarantee is "identical to 1e-6",
+        which is what CI checks against the committed hash."""
         import hashlib
         import json
-        snap = self.snapshot()
-        blob = json.dumps(snap, sort_keys=True).encode()
+
+        def rnd(x):
+            if isinstance(x, float):
+                return 0.0 if x != x else round(x, decimals) + 0.0  # NaN → 0.0, −0.0 → 0.0
+            if isinstance(x, dict):
+                return {k: rnd(v) for k, v in x.items()}
+            if isinstance(x, list):
+                return [rnd(v) for v in x]
+            return x
+
+        blob = json.dumps(rnd(self.snapshot()), sort_keys=True).encode()
         return hashlib.sha256(blob).hexdigest()

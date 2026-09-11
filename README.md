@@ -54,7 +54,7 @@ Numbers, and a reason for each number. No AI-insight widgets.
 
 ## Design rules (all tested)
 
-- **Determinism**: replaying the same file gives the same `state_hash()`, at any speed. CI regenerates the demo session byte-identically and checks the committed hash.
+- **Determinism**: replaying the same file gives the same `state_hash()`, at any speed. CI regenerates the demo session byte-identically on Linux and checks the committed hash (rounded to 1e-6: raw Greeks differ across platforms in the last bits — measured, see DESIGN.md).
 - **Attribution identity**: `realized == delta + gamma + vega + theta + execution + residual` for every position and the book, to 1e-9; the residual is a component, not a plug.
 - **Latency budget**: bus dispatch p99 < 10 ms, measured every run (demo: p50 0.7 ms, p99 2.5 ms).
 - **Pricer is an interface**: BSM today (Hull-checked), a surface pricer later, attribution untouched.
