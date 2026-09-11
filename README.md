@@ -54,7 +54,7 @@ alert CLEARED book-vega      book    ν$ per vol pt back to -237, inside limit -
 alert BREACH  book-vega      book    ν$ per vol pt -346 < limit -250
 alert BREACH  position-loss  A-0601  P&L today -1,228 < limit -1,200
 alert BREACH  position-delta S-0610  net Δ$ -91,084 < limit -90,000
-bus latency ms: p50 0.73  p99 2.49
+bus latency ms: p50 0.75  p99 1.9
 state hash: af26af790829676d…
 ```
 

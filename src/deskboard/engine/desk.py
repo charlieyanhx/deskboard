@@ -15,6 +15,7 @@ class Desk:
     book: Book
     limits: LimitEngine
     alerts: list[dict] = field(default_factory=list)
+    _last_checked_ts: float | None = None
 
     @classmethod
     def build(cls, positions: list[dict], rules: list[Rule] | None = None) -> "Desk":
@@ -30,4 +31,9 @@ class Desk:
         return desk
 
     async def _after_event(self, ev: Event) -> None:
-        await self.limits.check(self.book.snapshot(), ev.ts)
+        # one check per event timestamp: a quote batch (spot + every leg) shares a ts, and
+        # limits are read against the snapshot, so checking mid-batch buys nothing
+        if ev.ts == self._last_checked_ts:
+            return
+        self._last_checked_ts = ev.ts
+        await self.limits.check(self.book.snapshot(include_legs=False), ev.ts)

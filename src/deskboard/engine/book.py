@@ -234,9 +234,9 @@ class Book:
                 })
         return rows
 
-    def position_rows(self) -> list[dict]:
+    def position_rows(self, legs: list[dict] | None = None) -> list[dict]:
         out: dict[str, dict] = {}
-        for r in self.leg_rows():
+        for r in (legs if legs is not None else self.leg_rows()):
             o = out.setdefault(r["pos_id"], {"pos_id": r["pos_id"], "sleeve": r["sleeve"], "legs": 0,
                                              **{k: 0.0 for k in ("delta", "delta_usd", "gamma_usd_1pct", "vega_usd_1vol",
                                                                   "theta_usd_day", "pnl")},
@@ -247,8 +247,8 @@ class Book:
                     o[k] += r[k]
         return list(out.values())
 
-    def totals(self) -> dict:
-        rows = self.position_rows()
+    def totals(self, positions: list[dict] | None = None) -> dict:
+        rows = positions if positions is not None else self.position_rows()
         keys = ["delta", "delta_usd", "gamma_usd_1pct", "vega_usd_1vol", "theta_usd_day", "pnl"] + [f"pnl_{c}" for c in COMPONENTS]
         t = {k: float(sum(r[k] for r in rows)) for k in keys}
         t["identity_gap"] = t["pnl"] - sum(t[f"pnl_{c}"] for c in COMPONENTS)
@@ -258,8 +258,10 @@ class Book:
         t["spot"] = dict(self.spot)
         return t
 
-    def snapshot(self) -> dict:
-        return {"totals": self.totals(), "positions": self.position_rows(), "legs": self.leg_rows()}
+    def snapshot(self, include_legs: bool = True) -> dict:
+        legs = self.leg_rows()
+        positions = self.position_rows(legs)
+        return {"totals": self.totals(positions), "positions": positions, "legs": legs if include_legs else []}
 
     def state_hash(self, decimals: int = 6) -> str:
         """SHA-256 of the snapshot with floats rounded to `decimals`.
