@@ -18,8 +18,8 @@ import panel as pn
 from bokeh.models import ColumnDataSource
 from bokeh.plotting import figure
 
-from ..bus import Bus
-from ..engine.book import COMPONENTS, Book
+from ..engine.book import COMPONENTS
+from ..engine.desk import Desk
 from ..feeds.replay import ReplayFeed, load_session
 from ..feeds.synth import demo_blotter
 
@@ -34,12 +34,20 @@ FMT.update({"delta": {"type": "money", "precision": 1, "symbol": ""}, "mid": {"t
             "iv": {"type": "money", "precision": 4, "symbol": ""}, "qty": {"type": "money", "precision": 0, "symbol": ""}})
 
 
-def build(session_path: str, speed: float, blotter: list[dict] | None = None, period_ms: int = 500):
-    bus = Bus()
-    book = Book()
-    book.attach(bus)
-    book.load_positions(blotter or demo_blotter())
+ALERT_COLS = ["time", "state", "rule", "target", "reason"]
+
+
+def build(session_path: str, speed: float, blotter: list[dict] | None = None, period_ms: int = 500,
+          telegram: bool = False):
+    desk = Desk.build(blotter or demo_blotter())
+    bus, book = desk.bus, desk.book
     feed = ReplayFeed(bus, load_session(session_path), speed=speed)
+    bot = None
+    if telegram:
+        from ..alerts.telegram import from_env
+        bot = from_env(desk)
+        if bot is not None:
+            bot.attach(bus)
 
     def num(name, fmt="{value:,.0f}", **kw):
         return pn.indicators.Number(name=name, value=0.0, format=fmt, font_size="26pt", title_size="11pt", **kw)
@@ -67,6 +75,9 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
     fig.yaxis.axis_label = "$"
 
     feed_md = pn.pane.Markdown("")
+    limits_md = pn.pane.Markdown("")
+    alert_table = pn.widgets.Tabulator(pd.DataFrame(columns=ALERT_COLS), show_index=False, layout="fit_data_table",
+                                       height=360, disabled=True)
 
     def refresh():
         snap = book.snapshot()
@@ -85,32 +96,47 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
         leg_table.value = pd.DataFrame(snap["legs"])[LEG_COLS] if snap["legs"] else pd.DataFrame(columns=LEG_COLS)
         vals = [t[f"pnl_{c}"] for c in COMPONENTS]
         src.data = {"component": list(COMPONENTS), "usd": vals, "color": ["#2a7a5a" if v >= 0 else "#b23b3b" for v in vals]}
+        open_ = desk.limits.open_breaches()
+        limits_md.object = ("**limits** " + (" · ".join(f"🔴 {r} ({tg})" for r, tg in open_) if open_ else "🟢 all inside") +
+                            f" · {len(desk.alerts)} alert events" + (f" · telegram: {bot.sent} sent" if bot else ""))
+        if desk.alerts:
+            alert_table.value = pd.DataFrame([{"time": datetime.fromtimestamp(a["ts"], tz=timezone.utc).strftime("%H:%M:%S"),
+                                               "state": a["state"], "rule": a["rule"], "target": a["target"],
+                                               "reason": a["reason"]} for a in reversed(desk.alerts)])
         lat = bus.latency_ms()
         feed_md.object = (f"**replay** {os.path.basename(session_path)} at {speed}× · {feed.position:,}/{len(feed.df):,} events"
                           f"{' · done' if feed.done.is_set() else ''}\n\n"
                           f"**bus dispatch latency** p50 {lat['p50']:.2f} ms · p99 {lat['p99']:.2f} ms · max {lat.get('max', float('nan')):.2f} ms")
 
     def start():
-        asyncio.get_event_loop().create_task(feed.run())
+        loop = asyncio.get_event_loop()
+        loop.create_task(feed.run())
+        if bot is not None:
+            loop.create_task(bot.poll())
         pn.state.add_periodic_callback(refresh, period=period_ms)
 
     pn.state.onload(start)
 
     risk = pn.Column(pn.Row(pnl_ind, delta_ind, gamma_ind, vega_ind, theta_ind, resid_ind, gap_ind, spot_ind), clock,
-                     pn.pane.Markdown("### Positions"), pos_table, sizing_mode="stretch_width")
+                     limits_md, pn.pane.Markdown("### Positions"), pos_table, sizing_mode="stretch_width")
     pnl = pn.Column(pn.pane.Bokeh(fig), pn.pane.Markdown(
         "Attribution between consecutive marks with Greeks at the old mark; **residual = P&L − Σ Greeks − execution**, "
         "reported not hidden. Identity gap is the ledger check and must read $0.0000."), sizing_mode="stretch_width")
     legs = pn.Column(leg_table, sizing_mode="stretch_width")
     feedp = pn.Column(feed_md, sizing_mode="stretch_width")
+    rules_md = pn.pane.Markdown("**rules** " + " · ".join(
+        f"`{r.name}`: {r.scope} {r.metric} {'>' if r.op == 'max' else '<'} {r.bound:,.0f}" for r in desk.limits.rules))
+    alertsp = pn.Column(rules_md, alert_table, sizing_mode="stretch_width")
 
     tmpl = pn.template.FastListTemplate(title="deskboard", sidebar=[], theme_toggle=False, accent="#2458a6",
-                                        main=[pn.Tabs(("Risk", risk), ("P&L", pnl), ("Legs", legs), ("Feed", feedp))])
-    return tmpl, book, bus, feed
+                                        main=[pn.Tabs(("Risk", risk), ("P&L", pnl), ("Alerts", alertsp), ("Legs", legs),
+                                                      ("Feed", feedp))])
+    return tmpl, desk, feed
 
 
-def serve(session_path: str, speed: float, port: int = 5006, show: bool = False, blotter: list[dict] | None = None):
+def serve(session_path: str, speed: float, port: int = 5006, show: bool = False, blotter: list[dict] | None = None,
+          telegram: bool = False):
     def make():
-        tmpl, *_ = build(session_path, speed, blotter=blotter)
+        tmpl, *_ = build(session_path, speed, blotter=blotter, telegram=telegram)
         return tmpl
     pn.serve(make, port=port, show=show, title="deskboard", autoreload=False)

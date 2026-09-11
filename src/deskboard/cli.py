@@ -25,6 +25,9 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--speed", type=float, default=20.0)
     s.add_argument("--port", type=int, default=5006)
     s.add_argument("--show", action="store_true")
+    s.add_argument("--telegram", action="store_true", help="push alerts to Telegram and answer commands (env TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
+    t = sub.add_parser("telegram-test", help="send one test message to the configured chat")
+    t.add_argument("--session", default=DEMO)
     a = ap.parse_args(argv)
 
     if a.cmd == "record":
@@ -36,29 +39,42 @@ def main(argv: list[str] | None = None) -> None:
         __import__("pathlib").Path(blotter).write_text(json.dumps(demo_blotter(), indent=1))
         print(f"wrote {len(df)} events to {a.out} and the demo blotter to {blotter}")
     elif a.cmd == "replay":
-        from .bus import Bus
-        from .engine.book import Book
+        from .engine.desk import Desk
         from .feeds.blotter import load_blotter
         from .feeds.replay import ReplayFeed, load_session
         from .feeds.synth import demo_blotter
 
         async def run():
-            bus = Bus()
-            book = Book()
-            book.attach(bus)
-            book.load_positions(load_blotter(a.blotter) if a.blotter else demo_blotter())
-            await ReplayFeed(bus, load_session(a.session), speed=a.speed).run()
-            return book, bus
+            desk = Desk.build(load_blotter(a.blotter) if a.blotter else demo_blotter())
+            await ReplayFeed(desk.bus, load_session(a.session), speed=a.speed).run()
+            return desk
 
-        book, bus = asyncio.run(run())
-        t = book.totals()
+        desk = asyncio.run(run())
+        t = desk.book.totals()
         print(json.dumps({k: (round(v, 4) if isinstance(v, float) else v) for k, v in t.items()}, indent=1))
-        print("bus latency ms:", {k: round(v, 3) for k, v in bus.latency_ms().items()})
-        print("state hash:", book.state_hash())
+        for al in desk.alerts:
+            print(f"alert {al['state']:<7} {al['rule']:<16} {al['target']:<8} {al['reason']}")
+        print("bus latency ms:", {k: round(v, 3) for k, v in desk.bus.latency_ms().items()})
+        print("state hash:", desk.book.state_hash())
     elif a.cmd == "serve":
         from .feeds.blotter import load_blotter
         from .ui.app import serve
-        serve(a.session, a.speed, port=a.port, show=a.show, blotter=load_blotter(a.blotter) if a.blotter else None)
+        serve(a.session, a.speed, port=a.port, show=a.show, blotter=load_blotter(a.blotter) if a.blotter else None,
+              telegram=a.telegram)
+    elif a.cmd == "telegram-test":
+        from .alerts.telegram import format_risk, from_env
+        from .engine.desk import Desk
+        from .feeds.synth import demo_blotter
+
+        async def run():
+            desk = Desk.build(demo_blotter())
+            bot = from_env(desk)
+            if bot is None:
+                raise SystemExit("set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
+            await bot.send("deskboard online ✅\n" + format_risk(desk.book.snapshot()))
+            print("sent")
+
+        asyncio.run(run())
 
 
 if __name__ == "__main__":

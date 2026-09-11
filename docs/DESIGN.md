@@ -57,7 +57,24 @@ the server runs on the same asyncio loop as the bus, so the feed is a task, not 
 and the UI is a periodic read of `Book.snapshot()`. The UI has no influence on any number;
 a textual TUI would be a second consumer of the same snapshot.
 
-## Not in v0.1
+## Limits and alerts
 
-Scenario ladder, limits + alerts, execution page via tcakit (v0.2); health page, live feed,
+`LimitEngine` evaluates plain-data rules (`scope ∈ {book, position}`, metric, max/min,
+bound) against every snapshot after every event and publishes an `alert` event only when a
+(rule, target) changes state. Clearing needs the value 5 % of |bound| back inside
+(hysteresis). The alert carries value, bound and a sentence — the thing a trader acts on.
+The engine reads the snapshot and never writes to the book, so the state hash is unchanged
+by any rule set.
+
+## Telegram
+
+`alerts/telegram.py`: one `TelegramBot` subscribed to `alert`, sending via the Bot API
+(`sendMessage`, HTML) and long-polling `getUpdates` on the server's loop. Commands are
+answered from the current snapshot; messages from any chat other than the configured id
+are ignored. The API is an injected protocol so the bot is tested with a fake — no network
+in tests, no token anywhere in the repo.
+
+## Not yet
+
+Scenario ladder and the execution page via tcakit (rest of v0.2); health page, live feed,
 recorded GIF (v0.3); TUI, Grafana export (v0.4).
