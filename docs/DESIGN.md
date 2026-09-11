@@ -71,8 +71,21 @@ by any rule set.
 `alerts/telegram.py`: one `TelegramBot` subscribed to `alert`, sending via the Bot API
 (`sendMessage`, HTML) and long-polling `getUpdates` on the server's loop. Commands are
 answered from the current snapshot; messages from any chat other than the configured id
-are ignored. The API is an injected protocol so the bot is tested with a fake — no network
-in tests, no token anywhere in the repo.
+are ignored; messages that arrived while the bot was down are skipped. Every API failure
+becomes one `TelegramError` line carrying Telegram's `description` and a hint naming the
+env var to check, with the token never echoed (the URL carries it, so httpx's own message
+is not shown). A failure inside the bus chain is logged and swallowed — the book must not
+stop because a phone is unreachable. The API is an injected protocol so the bot is tested
+with a fake — no network in tests, no token anywhere in the repo.
+
+## One desk per process
+
+`serve()` builds the desk, the feed and the bot once and starts them on the server's
+asyncio loop via `pn.serve(start=False)` + `io_loop.add_callback`; each browser session
+only attaches widgets and a periodic `snapshot()` read. Before this change a session
+built its own desk, so nothing ran until a tab opened, a second tab replayed the day again
+and pushed every alert twice, and two pollers on one token produced 409s. The review
+caught it; the fix is the reason the README screenshot could be taken at the close.
 
 ## Not yet
 

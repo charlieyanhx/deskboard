@@ -5,8 +5,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+from pathlib import Path
 
-DEMO = "data/demo/session_2026-06-15.parquet"
+_REPO = Path(__file__).resolve().parents[2]
+DEMO = str(_REPO / "data/demo/session_2026-06-15.parquet") if (_REPO / "data/demo").exists() else "data/demo/session_2026-06-15.parquet"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -51,11 +53,17 @@ def main(argv: list[str] | None = None) -> None:
 
         desk = asyncio.run(run())
         t = desk.book.totals()
-        print(json.dumps({k: (round(v, 4) if isinstance(v, float) else v) for k, v in t.items()}, indent=1))
+        print(f"events {t['n_events']}  positions {t['n_positions']}  spot {' '.join(f'{k} {v:.2f}' for k, v in t['spot'].items())}")
+        print(f"pnl {t['pnl']:.2f} = delta {t['pnl_delta']:.2f} + gamma {t['pnl_gamma']:.2f} + vega {t['pnl_vega']:.2f}"
+              f" + theta {t['pnl_theta']:.2f} + execution {t['pnl_execution']:.2f} + residual {t['pnl_residual']:.2f}"
+              f"   identity_gap {t['identity_gap']:.4f}")
+        print(f"greeks  delta$ {t['delta_usd']:.0f}  gamma$/1% {t['gamma_usd_1pct']:.0f}  vega$/vol {t['vega_usd_1vol']:.0f}"
+              f"  theta$/day {t['theta_usd_day']:.0f}")
         for al in desk.alerts:
             print(f"alert {al['state']:<7} {al['rule']:<16} {al['target']:<8} {al['reason']}")
-        print("bus latency ms:", {k: round(v, 3) for k, v in desk.bus.latency_ms().items()})
-        print("state hash:", desk.book.state_hash())
+        lat = desk.bus.latency_ms()
+        print(f"bus latency ms  p50 {lat['p50']:.2f}  p99 {lat['p99']:.2f}  max {lat['max']:.2f}  n {lat['n']}")
+        print(f"state hash {desk.book.state_hash()}")
     elif a.cmd == "serve":
         from .feeds.blotter import load_blotter
         from .ui.app import serve
@@ -71,10 +79,15 @@ def main(argv: list[str] | None = None) -> None:
             bot = from_env(desk)
             if bot is None:
                 raise SystemExit("set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
+            me = await bot.api.get_me()
+            print(f"bot @{me.get('username', '?')} ok; sending to chat {bot.chat_id}")
             await bot.send("deskboard online ✅\n" + format_risk(desk.book.snapshot()))
-            print("sent")
+            print("sent — check Telegram for 'deskboard online' and the risk card")
 
-        asyncio.run(run())
+        try:
+            asyncio.run(run())
+        except Exception as exc:  # noqa: BLE001 — one line for an operator, no traceback with the token in it
+            raise SystemExit(str(exc)) from None
 
 
 if __name__ == "__main__":

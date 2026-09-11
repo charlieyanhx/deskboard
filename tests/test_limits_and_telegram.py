@@ -89,7 +89,7 @@ async def test_poll_loop_drains_and_stops():
         await asyncio.sleep(0.05)
         stop.set()
 
-    await asyncio.gather(bot.poll(stop, timeout=0), stopper())
+    await asyncio.gather(bot.poll(stop, timeout=0, skip_backlog=False), stopper())
     assert any("Commands" in t for _, t in api.sent)
 
 
@@ -106,3 +106,52 @@ def test_formatters_escape_html_and_cover_components():
 @pytest.mark.parametrize("cmd", ["/risk", "/pnl", "/positions", "/alerts", "/help"])
 def test_every_command_answers(cmd):
     assert answer(cmd, Desk.build(demo_blotter()))
+
+
+class FailingAPI(FakeAPI):
+    async def send_message(self, chat_id, text):
+        from deskboard.alerts.telegram import TelegramError
+        raise TelegramError("telegram sendMessage failed: 403 Forbidden: bot can't initiate conversation with a user")
+
+
+async def test_telegram_failure_never_stops_the_book(tmp_path):
+    path = tmp_path / "s.parquet"
+    save_session(record(seed=7), path)
+    desk = Desk.build(demo_blotter())
+    bot = TelegramBot(FailingAPI(), "42", desk)
+    bot.attach(desk.bus)
+    from deskboard.feeds.replay import load_session
+    await ReplayFeed(desk.bus, load_session(path)).run()          # would raise inside the bus chain if unhandled
+    assert bot.failed == len(desk.alerts) > 0 and bot.sent == 0
+    assert desk.book.totals()["n_events"] == 3503
+
+
+def test_error_explanations_include_description_hint_and_no_token():
+    import httpx
+
+    from deskboard.alerts.telegram import _explain
+    r = httpx.Response(400, json={"ok": False, "description": "Bad Request: chat not found"},
+                       request=httpx.Request("POST", "https://api.telegram.org/bot123:SECRET/sendMessage"))
+    msg = str(_explain(r, "sendMessage", "123:SECRET"))
+    assert "chat not found" in msg and "TELEGRAM_CHAT_ID" in msg and "SECRET" not in msg
+    r403 = httpx.Response(403, json={"description": "Forbidden: bot can't initiate conversation with a user"},
+                          request=httpx.Request("POST", "https://x"))
+    assert "press Start" in str(_explain(r403, "sendMessage", "t"))
+
+
+async def test_start_command_is_answered_and_backlog_skipped():
+    desk = Desk.build(demo_blotter())
+    api = FakeAPI()
+    api.updates = [{"update_id": 5, "message": {"chat": {"id": 1}, "text": "/risk"}}]   # stale, from before start
+    bot = TelegramBot(api, "1", desk)
+    stop = asyncio.Event()
+
+    async def later():
+        await asyncio.sleep(0.03)
+        api.updates = [{"update_id": 6, "message": {"chat": {"id": 1}, "text": "/start"}}]
+        await asyncio.sleep(0.05)
+        stop.set()
+
+    await asyncio.gather(bot.poll(stop, timeout=0), later())
+    texts = [t for _, t in api.sent]
+    assert any("Commands" in t for t in texts) and not any("<b>Risk</b>" in t for t in texts)

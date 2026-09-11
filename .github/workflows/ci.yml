@@ -22,4 +22,4 @@ jobs:
           deskboard record
           git diff --exit-code -- data/demo
           deskboard replay | tee /tmp/replay.txt
-          grep -q "state hash: $(cat data/demo/STATE_HASH)" /tmp/replay.txt
+          grep -q "state hash $(cat data/demo/STATE_HASH)" /tmp/replay.txt

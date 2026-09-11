@@ -75,10 +75,13 @@ class LegState:
     pnl: dict[str, float] = field(default_factory=lambda: {c: 0.0 for c in COMPONENTS})
 
     def realized(self) -> float:
-        if self.mark is None:
+        """Mark-to-market since the leg's first mark, plus what its fills earned or paid
+        against the mid at fill time. Defined this way so it equals Σ components exactly;
+        a fill on an already-marked leg is a price event on the existing quantity (v0.2
+        does not model quantity changes)."""
+        if self.mark is None or self.start_mid is None:
             return 0.0
-        base = self.fill_px if self.fill_px is not None else self.start_mid
-        return (self.mark.mid - base) * self.sq * self.mult if base is not None else 0.0
+        return (self.mark.mid - self.start_mid) * self.sq * self.mult + self.pnl["execution"]
 
 
 class Book:
@@ -111,7 +114,8 @@ class Book:
         self._add_position(ev.payload, fill_px_by_leg=ev.payload.get("fills"))
 
     def on_fill(self, ev: Event) -> None:
-        """A fill for an existing leg: execution P&L = (mid at fill − price) · signed qty · mult."""
+        """A fill for an existing leg: execution P&L = (mid at fill − price) · signed qty · mult.
+        The leg's mark-to-market base is unchanged, so the identity holds (see `realized`)."""
         self.n_events += 1
         self.last_ts = ev.ts
         p = ev.payload
@@ -197,9 +201,12 @@ class Book:
 
     def _attribute(self, ls: LegState, new: Mark) -> None:
         old = ls.mark
-        if old is None or old.g is None:
+        if old is None:
             return
         scale = ls.sq * ls.mult
+        if old.g is None:  # no Greeks at the old mark (IV outside no-arb bounds): the whole move is residual
+            ls.pnl["residual"] += (new.mid - old.mid) * scale
+            return
         dS = new.spot - old.spot
         dsig = (new.iv - old.iv) if (new.iv == new.iv and old.iv == old.iv) else 0.0
         ddays = (new.ts - old.ts) / 86400.0

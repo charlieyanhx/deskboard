@@ -108,3 +108,44 @@ def test_blotter_loader_accepts_demo_and_live_state_shapes(tmp_path):
     (tmp_path / "bad.json").write_text(__import__("json").dumps(bad))
     with pytest.raises(ValueError):
         load_blotter(tmp_path / "bad.json")
+
+
+async def test_fill_on_marked_leg_keeps_identity():
+    """A fill event on a leg that already has marks books execution and keeps realized == Σ components."""
+    from deskboard.engine.book import COMPONENTS, Book
+    bus = Bus()
+    book = Book()
+    book.attach(bus)
+    leg = {"symbol": "SYN", "sec_type": "OPT", "expiration": "20260730", "strike": 480.0, "right": "P",
+           "side": "SELL", "quantity": 2.0}
+    book.load_positions([{"pos_id": "X", "legs": [leg]}])
+    t0 = 1_781_000_000.0
+    await bus.publish("quote", t0, {"symbol": "SYN", "sec_type": "STK", "bid": 499.9, "ask": 500.1})
+    await bus.publish("quote", t0 + 1, {**leg, "bid": 9.0, "ask": 9.2})
+    await bus.publish("quote", t0 + 60, {"symbol": "SYN", "sec_type": "STK", "bid": 498.9, "ask": 499.1})
+    await bus.publish("quote", t0 + 61, {**leg, "bid": 9.4, "ask": 9.6})
+    await bus.publish("fill", t0 + 62, {"pos_id": "X", **leg, "price": 9.3})   # sold at 9.30 vs mid 9.50: cost
+    await bus.publish("quote", t0 + 120, {"symbol": "SYN", "sec_type": "STK", "bid": 500.9, "ask": 501.1})
+    await bus.publish("quote", t0 + 121, {**leg, "bid": 8.6, "ask": 8.8})
+    r = book.position_rows()[0]
+    assert r["pnl_execution"] == pytest.approx((9.5 - 9.3) * -2 * 100)
+    assert r["pnl"] == pytest.approx(sum(r[f"pnl_{c}"] for c in COMPONENTS), abs=1e-9)
+
+
+async def test_move_without_greeks_lands_in_residual_not_nowhere():
+    """A quote outside no-arbitrage bounds has no IV/Greeks; the next move must still be accounted for."""
+    from deskboard.engine.book import COMPONENTS, Book
+    bus = Bus()
+    book = Book()
+    book.attach(bus)
+    leg = {"symbol": "SYN", "sec_type": "OPT", "expiration": "20260730", "strike": 520.0, "right": "P",
+           "side": "BUY", "quantity": 1.0}
+    book.load_positions([{"pos_id": "Y", "legs": [leg]}])
+    t0 = 1_781_000_000.0
+    await bus.publish("quote", t0, {"symbol": "SYN", "sec_type": "STK", "bid": 499.9, "ask": 500.1})
+    await bus.publish("quote", t0 + 1, {**leg, "bid": 9.9, "ask": 10.1})     # ITM put quoted below intrinsic: IV NaN
+    assert book.legs["Y"][0].mark.g is None
+    await bus.publish("quote", t0 + 61, {**leg, "bid": 21.9, "ask": 22.1})
+    r = book.position_rows()[0]
+    assert r["pnl_residual"] == pytest.approx((22.0 - 10.0) * 100)
+    assert r["pnl"] == pytest.approx(sum(r[f"pnl_{c}"] for c in COMPONENTS), abs=1e-9)

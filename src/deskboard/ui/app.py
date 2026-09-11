@@ -1,8 +1,10 @@
-"""Panel app: Risk / P&L / Legs / Feed pages driven by `Book.snapshot()` on a timer.
+"""Panel app: Risk / P&L / Alerts / Legs / Feed pages driven by `Book.snapshot()` on a timer.
 
-The bus and the replay feed run as tasks on the server's own asyncio loop; the UI only
-reads state. Nothing in this module influences the numbers — swap it for a TUI and the
-engine does not notice.
+One desk per process: the bus, the replay feed, the limit engine and the Telegram bot are
+created once in `serve()` and started on the server's asyncio loop before any browser
+connects. A browser tab is just another reader of `Book.snapshot()` — open none, one or
+ten and the feed runs once and every alert is pushed once. Nothing in this module
+influences the numbers.
 
     deskboard serve --session data/demo/session_2026-06-15.parquet --speed 20
 """
@@ -37,17 +39,26 @@ FMT.update({"delta": {"type": "money", "precision": 1, "symbol": ""}, "mid": {"t
 ALERT_COLS = ["time", "state", "rule", "target", "reason"]
 
 
-def build(session_path: str, speed: float, blotter: list[dict] | None = None, period_ms: int = 500,
-          telegram: bool = False):
+def build_desk(session_path: str, speed: float, blotter: list[dict] | None = None, telegram: bool = False):
+    """The process-level state: desk (bus + book + limits), replay feed, optional bot."""
     desk = Desk.build(blotter or demo_blotter())
-    bus, book = desk.bus, desk.book
-    feed = ReplayFeed(bus, load_session(session_path), speed=speed)
+    feed = ReplayFeed(desk.bus, load_session(session_path), speed=speed)
     bot = None
     if telegram:
         from ..alerts.telegram import from_env
         bot = from_env(desk)
-        if bot is not None:
-            bot.attach(bus)
+        if bot is None:
+            raise SystemExit("set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID (or drop --telegram)")
+        bot.attach(desk.bus)
+    return desk, feed, bot
+
+
+def build(session_path: str, speed: float, blotter: list[dict] | None = None, period_ms: int = 500,
+          telegram: bool = False, shared=None):
+    """One browser session's widgets. `shared` = (desk, feed, bot) from build_desk; when None
+    (tests, notebooks) a private desk is built and its feed started on this session's load."""
+    desk, feed, bot = shared if shared is not None else build_desk(session_path, speed, blotter, telegram)
+    bus, book = desk.bus, desk.book
 
     def num(name, fmt="{value:,.0f}", **kw):
         return pn.indicators.Number(name=name, value=0.0, format=fmt, font_size="26pt", title_size="11pt", **kw)
@@ -98,7 +109,7 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
         src.data = {"component": list(COMPONENTS), "usd": vals, "color": ["#2a7a5a" if v >= 0 else "#b23b3b" for v in vals]}
         open_ = desk.limits.open_breaches()
         limits_md.object = ("**limits** " + (" · ".join(f"🔴 {r} ({tg})" for r, tg in open_) if open_ else "🟢 all inside") +
-                            f" · {len(desk.alerts)} alert events" + (f" · telegram: {bot.sent} sent" if bot else ""))
+                            f" · {len(desk.alerts)} alert events" + (f" · telegram: {bot.sent} sent, {bot.failed} failed" if bot else ""))
         if desk.alerts:
             alert_table.value = pd.DataFrame([{"time": datetime.fromtimestamp(a["ts"], tz=timezone.utc).strftime("%H:%M:%S"),
                                                "state": a["state"], "rule": a["rule"], "target": a["target"],
@@ -106,13 +117,16 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
         lat = bus.latency_ms()
         feed_md.object = (f"**replay** {os.path.basename(session_path)} at {speed}× · {feed.position:,}/{len(feed.df):,} events"
                           f"{' · done' if feed.done.is_set() else ''}\n\n"
-                          f"**bus dispatch latency** p50 {lat['p50']:.2f} ms · p99 {lat['p99']:.2f} ms · max {lat.get('max', float('nan')):.2f} ms")
+                          f"**bus dispatch latency** p50 {lat['p50']:.2f} ms · p99 {lat['p99']:.2f} ms · max {lat.get('max', float('nan')):.2f} ms"
+                          + (f"\n\n**telegram** chat {bot.chat_id} · {bot.sent} sent · {bot.failed} failed" if bot else ""))
 
     def start():
-        loop = asyncio.get_event_loop()
-        loop.create_task(feed.run())
-        if bot is not None:
-            loop.create_task(bot.poll())
+        if shared is None:  # private desk: this session owns the feed
+            loop = asyncio.get_event_loop()
+            loop.create_task(feed.run())
+            if bot is not None:
+                loop.create_task(bot.poll())
+        refresh()
         pn.state.add_periodic_callback(refresh, period=period_ms)
 
     pn.state.onload(start)
@@ -136,7 +150,20 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
 
 def serve(session_path: str, speed: float, port: int = 5006, show: bool = False, blotter: list[dict] | None = None,
           telegram: bool = False):
+    shared = build_desk(session_path, speed, blotter, telegram)
+    desk, feed, bot = shared
+
     def make():
-        tmpl, *_ = build(session_path, speed, blotter=blotter, telegram=telegram)
+        tmpl, *_ = build(session_path, speed, blotter=blotter, telegram=telegram, shared=shared)
         return tmpl
-    pn.serve(make, port=port, show=show, title="deskboard", autoreload=False)
+
+    def start_tasks():
+        loop = asyncio.get_event_loop()
+        loop.create_task(feed.run())
+        if bot is not None:
+            loop.create_task(bot.poll())
+            print(f"telegram: pushing alerts to chat {bot.chat_id}; commands /risk /pnl /positions /alerts")
+
+    server = pn.serve(make, port=port, show=show, title="deskboard", autoreload=False, start=False)
+    server.io_loop.add_callback(start_tasks)
+    server.io_loop.start()
