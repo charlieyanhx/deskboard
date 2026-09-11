@@ -1,0 +1,25 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install -e ".[dev]"
+      - run: ruff check src tests
+      - run: pytest -q
+      # the committed demo session must regenerate byte-identically, and replay to the committed hash
+      - run: |
+          deskboard record
+          git diff --exit-code -- data/demo
+          deskboard replay | tee /tmp/replay.txt
+          grep -q "state hash: $(cat data/demo/STATE_HASH)" /tmp/replay.txt
