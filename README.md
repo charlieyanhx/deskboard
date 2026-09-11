@@ -33,7 +33,7 @@ when one lands.
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                  # 30 tests: Hull values, parity, finite differences, bus order, replay
+pytest -q                  # 31 tests: closed-form values (incl. Hull's example), parity, finite differences, bus order, replay
                            #   determinism, attribution identity (incl. fills and quotes without
                            #   Greeks), latency budget, limit hysteresis, Telegram bot with a fake API
 deskboard record           # regenerate the demo session (3,503 events, seeded, byte-identical)

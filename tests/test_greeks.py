@@ -5,13 +5,21 @@ import pytest
 from deskboard.engine import greeks as bs
 
 
-def test_hull_example_call_and_put():
+def test_canonical_atm_case_call_and_put():
+    """S=K=100, r=5%, sigma=20%, T=1: call 10.4505835722, put 5.5735260223 (closed form, d1=0.35, d2=0.15)."""
     c = bs.greeks(100, 100, 1.0, 0.2, "C", r=0.05)
     p = bs.greeks(100, 100, 1.0, 0.2, "P", r=0.05)
-    assert c.price == pytest.approx(10.4506, abs=1e-4)
-    assert p.price == pytest.approx(5.5735, abs=1e-4)
+    assert c.price == pytest.approx(10.4505835722, abs=1e-8)
+    assert p.price == pytest.approx(5.5735260223, abs=1e-8)
     assert c.delta - p.delta == pytest.approx(1.0, abs=1e-12)          # put-call delta parity (q = 0)
     assert c.gamma == pytest.approx(p.gamma) and c.vega == pytest.approx(p.vega)
+
+
+def test_hull_textbook_example():
+    """Hull, Options, Futures and Other Derivatives, worked BSM example: S=42, K=40, r=10%, sigma=20%,
+    T=0.5 → call 4.76, put 0.81 (exact 4.7594223929 / 0.8085993729)."""
+    assert bs.price(42, 40, 0.5, 0.2, "C", r=0.10) == pytest.approx(4.7594223929, abs=1e-8)
+    assert bs.price(42, 40, 0.5, 0.2, "P", r=0.10) == pytest.approx(0.8085993729, abs=1e-8)
 
 
 def test_put_call_parity():
