@@ -39,8 +39,9 @@ starts at the fill and its execution cost is booked at once.
 
 ## Pricer
 
-Black-Scholes-Merton with dividend yield; checked against Hull's textbook values, put-call
-parity, and central finite differences. It is an interface: `price`, `greeks`,
+Black-Scholes-Merton with dividend yield; checked against closed-form values to 1e-8 (the
+S=K=100/5%/20%/1y case and Hull's worked S=42/K=40 example), put-call parity, and central
+finite differences. It is an interface: `price`, `greeks`,
 `implied_vol`. An arbitrage-free surface pricer replaces it without touching attribution.
 
 ## Feeds
