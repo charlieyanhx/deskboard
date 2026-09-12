@@ -58,6 +58,15 @@ the server runs on the same asyncio loop as the bus, so the feed is a task, not 
 and the UI is a periodic read of `Book.snapshot()`. The UI has no influence on any number;
 a textual TUI would be a second consumer of the same snapshot.
 
+## Scenario ladder
+
+`engine/scenarios.ladder` reprices every leg with a valid mark by Black-Scholes at the
+shocked spot and implied vol (stock legs linearly), optionally rolled forward by `days`.
+P&L is measured against the model price at the current mark, not the mid, so the zero cell
+is exactly 0 and the small-shock cells reproduce the dollar Greeks (tested: ±1 % spot vs
+Δ$ and Γ$, ±1 vol vs ν$, a short roll's rate vs Θ$). Legs without a valid implied vol are
+listed in `missing` — never priced at zero (the expired-leg-at-zero lesson).
+
 ## Limits and alerts
 
 `LimitEngine` evaluates plain-data rules (`scope ∈ {book, position}`, metric, max/min,
@@ -90,5 +99,5 @@ caught it; the fix is the reason the README screenshot could be taken at the clo
 
 ## Not yet
 
-Scenario ladder and the execution page via tcakit (rest of v0.2); health page, live feed,
+The execution page via tcakit (rest of v0.2); health page, live feed,
 recorded GIF (v0.3); TUI, Grafana export (v0.4).

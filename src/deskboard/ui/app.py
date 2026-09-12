@@ -22,6 +22,7 @@ from bokeh.plotting import figure
 
 from ..engine.book import COMPONENTS
 from ..engine.desk import Desk
+from ..engine.scenarios import ladder
 from ..feeds.replay import ReplayFeed, load_session
 from ..feeds.synth import demo_blotter
 
@@ -87,6 +88,8 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
 
     feed_md = pn.pane.Markdown("")
     limits_md = pn.pane.Markdown("")
+    ladder_md = pn.pane.Markdown("")
+    ladder_table = pn.widgets.Tabulator(pd.DataFrame(), show_index=False, layout="fit_data_table", height=300, disabled=True)
     alert_table = pn.widgets.Tabulator(pd.DataFrame(columns=ALERT_COLS), show_index=False, layout="fit_data_table",
                                        height=360, disabled=True)
 
@@ -114,6 +117,14 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
             alert_table.value = pd.DataFrame([{"time": datetime.fromtimestamp(a["ts"], tz=timezone.utc).strftime("%H:%M:%S"),
                                                "state": a["state"], "rule": a["rule"], "target": a["target"],
                                                "reason": a["reason"]} for a in reversed(desk.alerts)])
+        lad = ladder(book)
+        worst, ds, dv = lad.worst()
+        rows = pd.DataFrame(lad.to_rows())
+        rows.insert(0, "vol shock", [f"{v:+.0%}" if v else "0" for v in lad.vol_shocks])
+        ladder_table.value = rows.drop(columns="vol_shock").astype({c: int for c in rows.columns if c not in ("vol shock", "vol_shock")})
+        ladder_md.object = (f"**scenario ladder** — full revaluation at the current marks, P&L in $ vs the model price; "
+                            f"worst cell **{worst:,.0f}** at spot {ds:+.0%}, vol {dv:+.0%} vol pts"
+                            + (f" · not priced: {', '.join(lad.missing)}" if lad.missing else ""))
         lat = bus.latency_ms()
         feed_md.object = (f"**replay** {os.path.basename(session_path)} at {speed}× · {feed.position:,}/{len(feed.df):,} events"
                           f"{' · done' if feed.done.is_set() else ''}\n\n"
@@ -133,6 +144,10 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
 
     risk = pn.Column(pn.Row(pnl_ind, delta_ind, gamma_ind, vega_ind, theta_ind, resid_ind, gap_ind, spot_ind), clock,
                      limits_md, pn.pane.Markdown("### Positions"), pos_table, sizing_mode="stretch_width")
+    scen = pn.Column(ladder_md, ladder_table, pn.pane.Markdown(
+        "Rows: vol shock in vol points (added to every leg's implied vol). Columns: spot shock. Each cell reprices every leg "
+        "with Black-Scholes at the shocked spot and vol, instantaneous (no time roll). The zero cell is 0 by construction; "
+        "the ±1 % cells reproduce net Δ$ and Γ$ to first order (tested)."), sizing_mode="stretch_width")
     pnl = pn.Column(pn.pane.Bokeh(fig), pn.pane.Markdown(
         "Attribution between consecutive marks with Greeks at the old mark; **residual = P&L − Σ Greeks − execution**, "
         "reported not hidden. Identity gap is the ledger check and must read $0.0000."), sizing_mode="stretch_width")
@@ -143,8 +158,8 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
     alertsp = pn.Column(rules_md, alert_table, sizing_mode="stretch_width")
 
     tmpl = pn.template.FastListTemplate(title="deskboard", sidebar=[], theme_toggle=False, accent="#2458a6",
-                                        main=[pn.Tabs(("Risk", risk), ("P&L", pnl), ("Alerts", alertsp), ("Legs", legs),
-                                                      ("Feed", feedp))])
+                                        main=[pn.Tabs(("Risk", risk), ("P&L", pnl), ("Scenarios", scen), ("Alerts", alertsp),
+                                                      ("Legs", legs), ("Feed", feedp))])
     return tmpl, desk, feed
 
 

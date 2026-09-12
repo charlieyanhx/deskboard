@@ -61,6 +61,13 @@ def main(argv: list[str] | None = None) -> None:
               f"  theta$/day {t['theta_usd_day']:.0f}")
         for al in desk.alerts:
             print(f"alert {al['state']:<7} {al['rule']:<16} {al['target']:<8} {al['reason']}")
+        from .engine.scenarios import ladder
+        lad = ladder(desk.book)
+        worst, ds, dv = lad.worst()
+        print(f"ladder  worst {worst:,.0f} at spot {ds:+.0%} vol {dv:+.0%}"
+              f"  |  spot -5%: {lad.pnl[lad.vol_shocks.index(0.0), lad.spot_shocks.index(-0.05)]:,.0f}"
+              f"  spot +5%: {lad.pnl[lad.vol_shocks.index(0.0), lad.spot_shocks.index(0.05)]:,.0f}"
+              f"  vol +5: {lad.pnl[lad.vol_shocks.index(0.05), lad.spot_shocks.index(0.0)]:,.0f}")
         lat = desk.bus.latency_ms()
         print(f"bus latency ms  p50 {lat['p50']:.2f}  p99 {lat['p99']:.2f}  max {lat['max']:.2f}  n {lat['n']}")
         print(f"state hash {desk.book.state_hash()}")
