@@ -149,3 +149,14 @@ async def test_move_without_greeks_lands_in_residual_not_nowhere():
     r = book.position_rows()[0]
     assert r["pnl_residual"] == pytest.approx((22.0 - 10.0) * 100)
     assert r["pnl"] == pytest.approx(sum(r[f"pnl_{c}"] for c in COMPONENTS), abs=1e-9)
+
+
+async def test_fill_rows_sum_to_the_execution_line_and_use_tcakit_units(session):
+    book, _ = await _replay(session)
+    fx = book.fills
+    assert len(fx) == 2 and {f["pos_id"] for f in fx} == {"A-0615"}
+    total = sum(f["usd_per_contract"] * f["qty"] for f in fx)
+    assert total == pytest.approx(-book.totals()["pnl_execution"], abs=1e-9)   # cost-positive vs P&L sign
+    assert all(f["frac_half_spread"] == pytest.approx(1.0) for f in fx)         # both legs crossed the spread
+    sell = next(f for f in fx if f["side"] == "SELL")
+    assert sell["fill"] < sell["mid"] and sell["usd_per_contract"] > 0

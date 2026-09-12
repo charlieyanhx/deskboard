@@ -68,6 +68,10 @@ def main(argv: list[str] | None = None) -> None:
               f"  |  spot -5%: {lad.pnl[lad.vol_shocks.index(0.0), lad.spot_shocks.index(-0.05)]:,.0f}"
               f"  spot +5%: {lad.pnl[lad.vol_shocks.index(0.0), lad.spot_shocks.index(0.05)]:,.0f}"
               f"  vol +5: {lad.pnl[lad.vol_shocks.index(0.05), lad.spot_shocks.index(0.0)]:,.0f}")
+        if desk.book.fills:
+            fx = desk.book.fills
+            tot = sum(f["usd_per_contract"] * f["qty"] for f in fx)
+            print(f"execution  {len(fx)} fills  cost vs mid ${tot:,.2f}  mean {sum(f['frac_half_spread'] for f in fx) / len(fx):.2f} of half-spread")
         lat = desk.bus.latency_ms()
         print(f"bus latency ms  p50 {lat['p50']:.2f}  p99 {lat['p99']:.2f}  max {lat['max']:.2f}  n {lat['n']}")
         print(f"state hash {desk.book.state_hash()}")

@@ -89,6 +89,13 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
     feed_md = pn.pane.Markdown("")
     limits_md = pn.pane.Markdown("")
     ladder_md = pn.pane.Markdown("")
+    exec_md = pn.pane.Markdown("")
+    exec_table = pn.widgets.Tabulator(pd.DataFrame(), show_index=False, layout="fit_data_table", height=320, disabled=True,
+                                      formatters={"fill": {"type": "money", "precision": 3, "symbol": ""},
+                                                  "mid": {"type": "money", "precision": 3, "symbol": ""},
+                                                  "half_spread": {"type": "money", "precision": 3, "symbol": ""},
+                                                  "usd_per_contract": {"type": "money", "precision": 2},
+                                                  "frac_half_spread": {"type": "money", "precision": 2, "symbol": ""}})
     ladder_table = pn.widgets.Tabulator(pd.DataFrame(), show_index=False, layout="fit_data_table", height=300, disabled=True)
     alert_table = pn.widgets.Tabulator(pd.DataFrame(columns=ALERT_COLS), show_index=False, layout="fit_data_table",
                                        height=360, disabled=True)
@@ -125,6 +132,17 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
         ladder_md.object = (f"**scenario ladder** — full revaluation at the current marks, P&L in $ vs the model price; "
                             f"worst cell **{worst:,.0f}** at spot {ds:+.0%}, vol {dv:+.0%} vol pts"
                             + (f" · not priced: {', '.join(lad.missing)}" if lad.missing else ""))
+        if book.fills:
+            fx = pd.DataFrame(book.fills)
+            fx["time"] = pd.to_datetime(fx["ts"], unit="s", utc=True).dt.strftime("%H:%M:%S")
+            exec_table.value = fx[["time", "pos_id", "contract", "side", "qty", "fill", "mid", "half_spread",
+                                   "usd_per_contract", "frac_half_spread"]]
+            tot = (fx["usd_per_contract"] * fx["qty"]).sum()
+            exec_md.object = (f"**execution** {len(fx)} fills · cost vs mid at fill **${tot:,.2f}** · "
+                              f"mean {fx['frac_half_spread'].mean():.2f} of the half-spread paid "
+                              f"(1.0 = crossed the spread, 0 = at mid, negative = price improvement)")
+        else:
+            exec_md.object = "**execution** no fills yet this session"
         lat = bus.latency_ms()
         feed_md.object = (f"**replay** {os.path.basename(session_path)} at {speed}× · {feed.position:,}/{len(feed.df):,} events"
                           f"{' · done' if feed.done.is_set() else ''}\n\n"
@@ -152,14 +170,18 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
         "Attribution between consecutive marks with Greeks at the old mark; **residual = P&L − Σ Greeks − execution**, "
         "reported not hidden. Identity gap is the ledger check and must read $0.0000."), sizing_mode="stretch_width")
     legs = pn.Column(leg_table, sizing_mode="stretch_width")
+    execp = pn.Column(exec_md, exec_table, pn.pane.Markdown(
+        "Each fill against the mid at the moment it printed, in the units tcakit reports: $ per contract and fraction of the "
+        "half-spread. The sum is the `execution` line of the P&L attribution. Arrival, interval VWAP and reversion benchmarks "
+        "need the full order lifecycle and live in [tcakit](https://github.com/charlieyanhx/tcakit)."), sizing_mode="stretch_width")
     feedp = pn.Column(feed_md, sizing_mode="stretch_width")
     rules_md = pn.pane.Markdown("**rules** " + " · ".join(
         f"`{r.name}`: {r.scope} {r.metric} {'>' if r.op == 'max' else '<'} {r.bound:,.0f}" for r in desk.limits.rules))
     alertsp = pn.Column(rules_md, alert_table, sizing_mode="stretch_width")
 
     tmpl = pn.template.FastListTemplate(title="deskboard", sidebar=[], theme_toggle=False, accent="#2458a6",
-                                        main=[pn.Tabs(("Risk", risk), ("P&L", pnl), ("Scenarios", scen), ("Alerts", alertsp),
-                                                      ("Legs", legs), ("Feed", feedp))])
+                                        main=[pn.Tabs(("Risk", risk), ("P&L", pnl), ("Scenarios", scen), ("Execution", execp),
+                                                      ("Alerts", alertsp), ("Legs", legs), ("Feed", feedp))])
     return tmpl, desk, feed
 
 

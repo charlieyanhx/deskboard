@@ -67,6 +67,15 @@ is exactly 0 and the small-shock cells reproduce the dollar Greeks (tested: ±1 
 Δ$ and Γ$, ±1 vol vs ν$, a short roll's rate vs Θ$). Legs without a valid implied vol are
 listed in `missing` — never priced at zero (the expired-leg-at-zero lesson).
 
+## Execution page
+
+`Book.fills` keeps one row per fill: price, mid and half-spread at the moment of the fill,
+cost in $ per contract (positive = paid more than mid) and as a fraction of the half-spread
+— the two units [tcakit](https://github.com/charlieyanhx/tcakit) reports for option combos,
+so a desk reading both sees the same number. Σ(cost × qty) equals −`execution` in the
+attribution (tested). Benchmarks that need the whole order lifecycle (arrival, interval
+VWAP, reversion) are tcakit's job, not the dashboard's.
+
 ## Limits and alerts
 
 `LimitEngine` evaluates plain-data rules (`scope ∈ {book, position}`, metric, max/min,
@@ -99,5 +108,5 @@ caught it; the fix is the reason the README screenshot could be taken at the clo
 
 ## Not yet
 
-The execution page via tcakit (rest of v0.2); health page, live feed,
+Nothing of v0.2 remains; health page, live feed,
 recorded GIF (v0.3); TUI, Grafana export (v0.4).

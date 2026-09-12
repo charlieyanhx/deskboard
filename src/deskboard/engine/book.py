@@ -94,6 +94,7 @@ class Book:
         self.by_key: dict[str, list[LegState]] = {}
         self.spot: dict[str, float] = {}
         self.quotes: dict[str, dict] = {}      # last raw quote per contract, held or not
+        self.fills: list[dict] = []            # one row per fill: price vs mid at fill, in tcakit's units
         self.last_ts: float | None = None
         self.n_events = 0
 
@@ -122,7 +123,7 @@ class Book:
         for ls in self.legs.get(p["pos_id"], []):
             if ls.key == contract_key(p) and ls.mark is not None:
                 ls.fill_px = float(p["price"])
-                ls.pnl["execution"] += (ls.mark.mid - ls.fill_px) * ls.sq * ls.mult
+                self._book_fill(ls, ls.mark, ls.fill_px, ev.ts)
 
     def on_quote(self, ev: Event) -> None:
         self.n_events += 1
@@ -179,7 +180,22 @@ class Book:
                 m = self._mark_from_quote(self.quotes[ls.key])
                 ls.mark = m
                 ls.start_mid = m.mid
-                ls.pnl["execution"] += (m.mid - ls.fill_px) * ls.sq * ls.mult
+                self._book_fill(ls, m, ls.fill_px, m.ts)
+
+    def _book_fill(self, ls: LegState, m: Mark, fill_px: float, ts: float) -> None:
+        """Execution P&L of one fill against the mid at fill; the row is kept for the Execution
+        page in the units tcakit uses: $ per contract and fraction of the half-spread paid
+        (1.0 = crossed the whole half-spread, 0 = filled at mid, < 0 = better than mid)."""
+        scale = ls.sq * ls.mult
+        cost_quote = (m.mid - fill_px) * ls.sq / abs(ls.sq)      # per share, positive = better than mid
+        half = (m.ask - m.bid) / 2.0
+        self.fills.append({
+            "ts": ts, "pos_id": ls.pos_id, "contract": ls.key, "side": "BUY" if ls.sq > 0 else "SELL",
+            "qty": abs(ls.sq), "fill": fill_px, "mid": m.mid, "half_spread": half,
+            "usd_per_contract": -cost_quote * ls.mult,            # positive = cost (tcakit sign: paid − mid)
+            "frac_half_spread": (-cost_quote / half) if half > 0 else float("nan"),
+        })
+        ls.pnl["execution"] += (m.mid - fill_px) * scale
 
     def _mark_from_quote(self, q: dict) -> Mark:
         if q.get("sec_type", "OPT") == "STK":

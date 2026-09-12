@@ -33,7 +33,7 @@ when one lands.
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                  # 37 tests: closed-form values (incl. Hull's example), parity, finite differences, bus order, replay
+pytest -q                  # 38 tests: closed-form values (incl. Hull's example), parity, finite differences, bus order, replay
                            #   determinism, attribution identity (incl. fills and quotes without
                            #   Greeks), latency budget, limit hysteresis, Telegram bot with a fake API
 deskboard record           # regenerate the demo session (3,503 events, seeded, byte-identical)
@@ -54,6 +54,7 @@ alert BREACH  book-vega        book     ν$ per vol pt -346 < limit -250
 alert BREACH  position-loss    A-0601   P&L today -1,228 < limit -1,200
 alert BREACH  position-delta   S-0610   net Δ$ -90,334 < limit -90,000
 ladder  worst -10,928 at spot +10% vol +10%  |  spot -5%: -1,548  spot +5%: -845  vol +5: -1,442
+execution  2 fills  cost vs mid $13.50  mean 1.00 of half-spread
 bus latency ms  p50 0.85  p99 5.35  max 53.80  n 3508
 state hash af26af790829676d3824c15cef4989c04448f5e65e6b1237358c802abf2ac3ca
 ```
@@ -118,6 +119,7 @@ it was down are skipped rather than answered late. Each limit event is one messa
 |---|---|
 | **Risk** | P&L today, net Δ$, Γ$ per 1 %, ν$ per vol point, Θ$ per day, residual, identity gap (must read 0.0000), spot; open limit breaches; positions table with per-position Greeks and attribution |
 | **P&L** | attribution bars: delta / gamma / vega / theta / execution / residual |
+| **Execution** | every fill against the mid at the moment it printed — $ per contract and fraction of the half-spread paid (tcakit's units); the sum is the `execution` line of the attribution |
 | **Scenarios** | spot × vol ladder: full Black-Scholes revaluation of every leg at the current marks, P&L per cell, worst cell named; the zero cell is 0 by construction and the ±1 % cells reproduce Δ$ and Γ$ (tested) |
 | **Alerts** | the rules, and every BREACH / CLEARED event with its reason |
 | **Legs** | per-contract mid, implied vol, Greeks, P&L |
@@ -154,7 +156,7 @@ src/deskboard/
   feeds/replay.py     parquet/CSV → bus at N× speed
   feeds/synth.py      seeded demo session recorder + demo blotter
   feeds/blotter.py    positions from a file (demo or live-state shape)
-  ui/app.py           Panel app: Risk / P&L / Scenarios / Alerts / Legs / Feed; one desk per process
+  ui/app.py           Panel app: Risk / P&L / Scenarios / Execution / Alerts / Legs / Feed; one desk per process
   cli.py              record · replay · serve · telegram-test
 data/demo/            session parquet, blotter.json, STATE_HASH
 docs/DESIGN.md        the one rule, the cross-platform finding, what is not done yet
@@ -162,8 +164,7 @@ docs/DESIGN.md        the one rule, the cross-platform finding, what is not done
 
 ## Roadmap
 
-Rest of v0.2: an execution page fed by [tcakit](https://github.com/charlieyanhx/tcakit)'s
-per-order costs (tcakit's side of that is not built yet). v0.3: strategy-health page, one live underlying feed, recorded demo.
+v0.2 is complete (limits, Telegram, scenario ladder, execution page). v0.3: strategy-health page, one live underlying feed, recorded demo.
 v0.4: textual TUI, Grafana export.
 
 ## Data and privacy
