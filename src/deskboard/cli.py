@@ -1,4 +1,4 @@
-"""`deskboard record | replay | serve`."""
+"""`deskboard record | replay | serve | health | telegram-test`."""
 
 from __future__ import annotations
 
@@ -8,7 +8,9 @@ import json
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
-DEMO = str(_REPO / "data/demo/session_2026-06-15.parquet") if (_REPO / "data/demo").exists() else "data/demo/session_2026-06-15.parquet"
+_DEMO_DIR = _REPO / "data/demo" if (_REPO / "data/demo").exists() else Path("data/demo")
+DEMO = str(_DEMO_DIR / "session_2026-06-15.parquet")
+HISTORY = str(_DEMO_DIR / "pnl_history.csv")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -28,18 +30,24 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--port", type=int, default=5006)
     s.add_argument("--show", action="store_true")
     s.add_argument("--telegram", action="store_true", help="push alerts to Telegram and answer commands (env TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
+    s.add_argument("--history", default=HISTORY, help="daily P&L CSV (date,pnl[,backtest]) for the Health page; '' to disable")
     t = sub.add_parser("telegram-test", help="send one test message to the configured chat")
     t.add_argument("--session", default=DEMO)
+    h = sub.add_parser("health", help="strategy health from a daily P&L CSV: full-calendar Sharpe, drawdown, live vs backtest")
+    h.add_argument("--history", default=HISTORY, help="CSV with columns date, pnl and optionally backtest (dollars per day)")
+    h.add_argument("--capital", type=float, default=None, help="for the drawdown as a fraction")
     a = ap.parse_args(argv)
 
     if a.cmd == "record":
         from .feeds.replay import save_session
-        from .feeds.synth import demo_blotter, record
+        from .feeds.synth import demo_blotter, demo_pnl_history, record
         df = record(seed=a.seed)
         save_session(df, a.out)
-        blotter = str(a.out).rsplit("/", 1)[0] + "/blotter.json"
-        __import__("pathlib").Path(blotter).write_text(json.dumps(demo_blotter(), indent=1))
-        print(f"wrote {len(df)} events to {a.out} and the demo blotter to {blotter}")
+        out_dir = Path(a.out).parent
+        (out_dir / "blotter.json").write_text(json.dumps(demo_blotter(), indent=1))
+        hist = demo_pnl_history(seed=a.seed)
+        hist.to_csv(out_dir / "pnl_history.csv", index=False)
+        print(f"wrote {len(df)} events to {a.out}, the demo blotter and {len(hist)} days of P&L history to {out_dir}/")
     elif a.cmd == "replay":
         from .engine.desk import Desk
         from .feeds.blotter import load_blotter
@@ -79,7 +87,14 @@ def main(argv: list[str] | None = None) -> None:
         from .feeds.blotter import load_blotter
         from .ui.app import serve
         serve(a.session, a.speed, port=a.port, show=a.show, blotter=load_blotter(a.blotter) if a.blotter else None,
+              history=a.history or None,
               telegram=a.telegram)
+    elif a.cmd == "health":
+        from .engine.health import assess, load_history
+
+        pnl, bt = load_history(a.history)
+        for r in assess(pnl, bt, a.capital).rows():
+            print(f"{r['metric']:<28} {r['value']}")
     elif a.cmd == "telegram-test":
         from .alerts.telegram import format_risk, from_env
         from .engine.desk import Desk

@@ -22,6 +22,7 @@ from bokeh.plotting import figure
 
 from ..engine.book import COMPONENTS
 from ..engine.desk import Desk
+from ..engine.health import assess, full_calendar, load_history, rolling_sharpe
 from ..engine.scenarios import ladder
 from ..feeds.replay import ReplayFeed, load_session
 from ..feeds.synth import demo_blotter
@@ -55,7 +56,7 @@ def build_desk(session_path: str, speed: float, blotter: list[dict] | None = Non
 
 
 def build(session_path: str, speed: float, blotter: list[dict] | None = None, period_ms: int = 500,
-          telegram: bool = False, shared=None):
+          telegram: bool = False, shared=None, history: str | None = None):
     """One browser session's widgets. `shared` = (desk, feed, bot) from build_desk; when None
     (tests, notebooks) a private desk is built and its feed started on this session's load."""
     desk, feed, bot = shared if shared is not None else build_desk(session_path, speed, blotter, telegram)
@@ -99,6 +100,8 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
     ladder_table = pn.widgets.Tabulator(pd.DataFrame(), show_index=False, layout="fit_data_table", height=300, disabled=True)
     alert_table = pn.widgets.Tabulator(pd.DataFrame(columns=ALERT_COLS), show_index=False, layout="fit_data_table",
                                        height=360, disabled=True)
+    healthp = _health_page(history, book) if history else pn.Column(pn.pane.Markdown(
+        "**health** no P&L history given — `deskboard serve --history path.csv` (columns date, pnl[, backtest])"))
 
     def refresh():
         snap = book.snapshot()
@@ -143,6 +146,8 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
                               f"(1.0 = crossed the spread, 0 = at mid, negative = price improvement)")
         else:
             exec_md.object = "**execution** no fills yet this session"
+        if history:
+            healthp.refresh()
         lat = bus.latency_ms()
         feed_md.object = (f"**replay** {os.path.basename(session_path)} at {speed}× · {feed.position:,}/{len(feed.df):,} events"
                           f"{' · done' if feed.done.is_set() else ''}\n\n"
@@ -179,19 +184,77 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
         f"`{r.name}`: {r.scope} {r.metric} {'>' if r.op == 'max' else '<'} {r.bound:,.0f}" for r in desk.limits.rules))
     alertsp = pn.Column(rules_md, alert_table, sizing_mode="stretch_width")
 
-    tmpl = pn.template.FastListTemplate(title="deskboard", sidebar=[], theme_toggle=False, accent="#2458a6",
-                                        main=[pn.Tabs(("Risk", risk), ("P&L", pnl), ("Scenarios", scen), ("Execution", execp),
-                                                      ("Alerts", alertsp), ("Legs", legs), ("Feed", feedp))])
+    tabs = pn.Tabs(("Risk", risk), ("P&L", pnl), ("Scenarios", scen), ("Execution", execp), ("Health", healthp),
+                   ("Alerts", alertsp), ("Legs", legs), ("Feed", feedp))
+    names = list(tabs._names)
+    want = (pn.state.session_args.get("tab", [b""])[0].decode() if pn.state.session_args else "")
+    if want in names:                       # ?tab=Health opens on that page (wall monitors, screenshots)
+        tabs.active = names.index(want)
+    tmpl = pn.template.FastListTemplate(title="deskboard", sidebar=[], theme_toggle=False, accent="#2458a6", main=[tabs])
     return tmpl, desk, feed
 
 
+class _health_page(pn.Column):
+    """Health tab: the history file plus today's live P&L as a provisional last day, re-assessed on every refresh."""
+
+    def __init__(self, history: str, book):
+        self.live, self.backtest = load_history(history)
+        self.book = book
+        self.today = pd.Timestamp(datetime.fromtimestamp(book.totals()["last_ts"] or 0, tz=timezone.utc).date()) \
+            if book.totals()["last_ts"] else None
+        self.md = pn.pane.Markdown("")
+        self.table = pn.widgets.Tabulator(pd.DataFrame(columns=["metric", "value"]), show_index=False,
+                                          layout="fit_data_table", height=240, disabled=True)
+        self.src = ColumnDataSource({"date": [], "cum": [], "dd": [], "rs": [], "cusum": []})
+        f1 = figure(height=220, sizing_mode="stretch_width", x_axis_type="datetime", title="cumulative P&L ($) and drawdown",
+                    toolbar_location=None)
+        f1.line("date", "cum", source=self.src, color="#2458a6", legend_label="cumulative")
+        f1.varea("date", "dd", 0, source=self.src, color="#b23b3b", alpha=0.35, legend_label="drawdown")
+        f1.legend.location = "top_left"
+        f2 = figure(height=180, sizing_mode="stretch_width", x_axis_type="datetime", x_range=f1.x_range,
+                    title="rolling 63-day Sharpe (full calendar)", toolbar_location=None)
+        f2.line("date", "rs", source=self.src, color="#2a7a5a")
+        f3 = figure(height=180, sizing_mode="stretch_width", x_axis_type="datetime", x_range=f1.x_range,
+                    title="live vs backtest: one-sided CUSUM (flag above the line)", toolbar_location=None)
+        f3.line("date", "cusum", source=self.src, color="#b23b3b")
+        self.hline = f3.line([], [], color="#666", line_dash="dashed")
+        super().__init__(self.md, pn.pane.Bokeh(f1), pn.pane.Bokeh(f2), pn.pane.Bokeh(f3), self.table,
+                         pn.pane.Markdown(
+            "Every statistic is on the full business-day calendar (inactive days are $0, never dropped). Sharpe is "
+            "√252 · mean / std of daily dollars and is quoted with its window. The CUSUM accumulates the normalised "
+            "shortfall of live against the backtest's expected P&L (allowance 0.5 std/day, threshold 8: 2.7 % false "
+            "flags per 500 days, median 23-day delay on a 0.8-std fade, by simulation). Today's live P&L is appended "
+            "as a provisional last day."), sizing_mode="stretch_width")
+        self.refresh()
+
+    def refresh(self):
+        live = self.live
+        if self.today is not None and self.today > live.index.max():
+            live = pd.concat([live, pd.Series([self.book.totals()["pnl"]], index=[self.today])])
+        h = assess(live, self.backtest)
+        rows = h.rows()
+        self.table.value = pd.DataFrame(rows)
+        cal = full_calendar(live)
+        rs = rolling_sharpe(cal, 63)
+        dd = h.drawdown.series
+        cus = h.divergence.cusum.reindex(cal.index) if h.divergence else pd.Series(float("nan"), index=cal.index)
+        self.src.data = {"date": cal.index, "cum": cal.cumsum().to_numpy(), "dd": dd.to_numpy(), "rs": rs.to_numpy(),
+                         "cusum": cus.to_numpy()}
+        if h.divergence:
+            self.hline.data_source.data = {"x": [cal.index[0], cal.index[-1]], "y": [h.divergence.threshold] * 2}
+        flag = h.divergence.reason() if h.divergence else "no backtest column"
+        self.md.object = (f"**health** {h.days} days · Sharpe {h.sharpe_full:.2f} full / {h.sharpe_63d:.2f} last 63 / "
+                          f"{h.sharpe_252d:.2f} last 252 · max DD {h.drawdown.max_dd:,.0f} · "
+                          f"{'🔴' if h.divergence and h.divergence.crossed else '🟢'} {flag}")
+
+
 def serve(session_path: str, speed: float, port: int = 5006, show: bool = False, blotter: list[dict] | None = None,
-          telegram: bool = False):
+          telegram: bool = False, history: str | None = None):
     shared = build_desk(session_path, speed, blotter, telegram)
     desk, feed, bot = shared
 
     def make():
-        tmpl, *_ = build(session_path, speed, blotter=blotter, telegram=telegram, shared=shared)
+        tmpl, *_ = build(session_path, speed, blotter=blotter, telegram=telegram, shared=shared, history=history)
         return tmpl
 
     def start_tasks():

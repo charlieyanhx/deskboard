@@ -7,7 +7,8 @@
 An options risk and P&L dashboard driven by an event bus, with a **deterministic replay
 mode**: Black-Scholes Greeks and dollar-Greeks per leg, P&L attribution with an exact
 identity, a limit engine that says *why* it fired, a Telegram bot that pushes those alerts
-and answers `/risk` `/pnl` `/positions` `/alerts`, and a Panel UI that only reads engine
+and answers `/risk` `/pnl` `/positions` `/alerts`, a strategy-health page (full-calendar
+Sharpe, drawdown, a CUSUM on live-vs-backtest), and a Panel UI that only reads engine
 state. Same session file → same book state, to 1e-6, on any machine — that is the test.
 
 ![Risk page at the close of the demo session: P&L +$412, four positions, three open limit breaches, identity gap 0.0000](docs/img/risk.png)
@@ -33,12 +34,14 @@ when one lands.
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                  # 38 tests: closed-form values (incl. Hull's example), parity, finite differences, bus order, replay
+pytest -q                  # 46 tests: closed-form values (incl. Hull's example), parity, finite differences, bus order, replay
                            #   determinism, attribution identity (incl. fills and quotes without
-                           #   Greeks), latency budget, limit hysteresis, Telegram bot with a fake API
-deskboard record           # regenerate the demo session (3,503 events, seeded, byte-identical)
+                           #   Greeks), latency budget, limit hysteresis, Telegram bot with a fake API,
+                           #   full-calendar Sharpe, drawdown identities, CUSUM false-flag rate by simulation
+deskboard record           # regenerate the demo session (3,503 events) and the 500-day P&L history — seeded, byte-identical
 deskboard replay           # headless: totals, alerts, bus latency, state hash
-deskboard serve --speed 60 # http://localhost:5006 — one trading day in ~7 minutes
+deskboard health           # strategy health from data/demo/pnl_history.csv (or --history yours.csv)
+deskboard serve --speed 60 # http://localhost:5006 — one trading day in ~7 minutes; ?tab=Health opens on a page
 ```
 
 `deskboard replay` on the committed demo session prints exactly this (M-series laptop; the
@@ -113,6 +116,27 @@ it was down are skipped rather than answered late. Each limit event is one messa
 🔴 BREACH with the value and the bound, 🟢 CLEARED once the value is 5 % back inside
 (hysteresis, so a number hovering at a limit does not page you every tick).
 
+`deskboard health` on the committed demo history (500 business days, `date,pnl,backtest`;
+the live series tracks the backtest, then falls $120/day short for the last 120 days):
+
+```
+days on the full calendar    500
+Sharpe, full window          0.22
+Sharpe, last 63 bdays        -2.41
+Sharpe, last 252 bdays       -0.63
+max drawdown ($)             -9038
+current drawdown ($, days)   -8,115 (204)
+live vs backtest             live below backtest: CUSUM crossed 8 on 2026-01-29; mean shortfall 40/day over 500 days (t = -5.47)
+```
+
+![Health page: cumulative P&L and drawdown, rolling 63-day Sharpe, and the live-vs-backtest CUSUM crossing its threshold in January 2026](docs/img/health.png)
+
+*Health page at the close of the demo session. The fade starts on 29 December; the CUSUM
+crosses 8 on 29 January, 23 business days later — the median delay the threshold was chosen
+for. The rolling 63-day Sharpe read +0.99 that day and was still positive on some days in
+late May: a window statistic cannot separate a fade from noise this early, which is the
+CUSUM's job.*
+
 ## What it shows
 
 | Page | Content |
@@ -120,6 +144,7 @@ it was down are skipped rather than answered late. Each limit event is one messa
 | **Risk** | P&L today, net Δ$, Γ$ per 1 %, ν$ per vol point, Θ$ per day, residual, identity gap (must read 0.0000), spot; open limit breaches; positions table with per-position Greeks and attribution |
 | **P&L** | attribution bars: delta / gamma / vega / theta / execution / residual |
 | **Execution** | every fill against the mid at the moment it printed — $ per contract and fraction of the half-spread paid (tcakit's units); the sum is the `execution` line of the attribution |
+| **Health** | the P&L history plus today as a provisional last day: cumulative P&L and drawdown, rolling 63-day Sharpe on the full calendar, one-sided CUSUM of live against the backtest's expected P&L with the date it crossed |
 | **Scenarios** | spot × vol ladder: full Black-Scholes revaluation of every leg at the current marks, P&L per cell, worst cell named; the zero cell is 0 by construction and the ±1 % cells reproduce Δ$ and Γ$ (tested) |
 | **Alerts** | the rules, and every BREACH / CLEARED event with its reason |
 | **Legs** | per-contract mid, implied vol, Greeks, P&L |
@@ -136,6 +161,7 @@ Tested:
 - **Latency budget** — bus dispatch p99 < 10 ms, measured every run.
 - **Alerts on state change only**, each with the value and the bound; hysteresis on clear; a rule set never changes the state hash.
 - **Bot failures are non-fatal** — a raising Telegram API inside the bus chain does not stop the replay.
+- **Health on the full calendar** — a strategy that trades one day in five cannot report the Sharpe of its active days (padding with $0 cuts it by ~√5, tested); the CUSUM threshold is 8, not the textbook 5, because on 500 simulated business days of noise 5 flags 41 % of clean histories and 8 flags 2.7 % (tested by simulation), at a median 23-day delay on a 0.8-std/day fade.
 
 By construction (not a test): the pricer is an interface (`price`, `greeks`, `implied_vol`)
 so a surface pricer can replace Black-Scholes without touching attribution; the code
@@ -151,28 +177,29 @@ src/deskboard/
   engine/book.py      positions, marks, dollar-Greeks, attribution, snapshot, state hash
   engine/limits.py    rules → alert events with reasons; hysteresis
   engine/scenarios.py spot × vol ladder by full revaluation; zero cell exact; missing marks named
+  engine/health.py    full-calendar Sharpe (rolling), drawdown, live-vs-backtest CUSUM; load_history
   engine/desk.py      composition root: bus + book + limits
   alerts/telegram.py  Bot API over httpx: push alerts, answer commands, allow-listed chat
   feeds/replay.py     parquet/CSV → bus at N× speed
-  feeds/synth.py      seeded demo session recorder + demo blotter
+  feeds/synth.py      seeded demo session recorder, demo blotter, demo P&L history
   feeds/blotter.py    positions from a file (demo or live-state shape)
-  ui/app.py           Panel app: Risk / P&L / Scenarios / Execution / Alerts / Legs / Feed; one desk per process
-  cli.py              record · replay · serve · telegram-test
-data/demo/            session parquet, blotter.json, STATE_HASH
-docs/DESIGN.md        the one rule, the cross-platform finding, what is not done yet
+  ui/app.py           Panel app: Risk / P&L / Scenarios / Execution / Health / Alerts / Legs / Feed; one desk per process
+  cli.py              record · replay · serve · health · telegram-test
+data/demo/            session parquet, blotter.json, pnl_history.csv, STATE_HASH
+docs/DESIGN.md        the one rule, the cross-platform finding, the CUSUM threshold, what is not done yet
 ```
 
 ## Roadmap
 
-v0.2 is complete (limits, Telegram, scenario ladder, execution page). v0.3: strategy-health page, one live underlying feed, recorded demo.
-v0.4: textual TUI, Grafana export.
+v0.3 still open: one live underlying feed, a recorded demo. v0.4: textual TUI, Grafana export.
 
 ## Data and privacy
 
 Everything in this repo is synthetic: the demo session is generated by `deskboard record`
-from a seeded vol surface, and the demo blotter is fictional. The author's live positions
-and broker connector configuration never enter the repo; a live book runs through the same
-blotter schema from a local, gitignored file.
+from a seeded vol surface, the demo blotter is fictional, and the 500-day P&L history is
+drawn from a seeded normal with a fade written into its last 120 days. The author's live
+positions, P&L history and broker connector configuration never enter the repo; a live book
+runs through the same blotter schema and history CSV from local, gitignored files.
 
 ## Companion repos
 

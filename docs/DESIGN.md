@@ -106,7 +106,22 @@ built its own desk, so nothing ran until a tab opened, a second tab replayed the
 and pushed every alert twice, and two pollers on one token produced 409s. The review
 caught it; the fix is the reason the README screenshot could be taken at the close.
 
+## Health page
+
+`engine/health.py` takes a daily P&L history (`date,pnl[,backtest]`, dollars) and reports
+what a desk asks about a strategy rather than a book: Sharpe on the full business-day
+calendar (inactive days are $0 — the active-day Sharpe of a one-day-in-five strategy
+overstates by ~√5, tested), rolling 63- and 252-day windows, drawdown from the running
+high-water mark, and whether live is tracking the backtest.
+
+The tracking test is a one-sided CUSUM (Page 1954) on the live-minus-backtest difference,
+normalised by that difference's own daily std, allowance `k = 0.5`. The threshold is
+`h = 8`, not the textbook 5: simulated on 500 business days of Gaussian noise, `h = 5`
+flags 41 % of clean histories and `h = 8` flags 2.7 %, while a 0.8-std/day fade is still
+caught at a median delay of 23 days (2,000 paths; the test reproduces it on 300). A flag
+is the date the CUSUM crossed — a reason to look, not a verdict. The UI appends today's
+live P&L as a provisional last day so the page moves with the session.
+
 ## Not yet
 
-Nothing of v0.2 remains; health page, live feed,
-recorded GIF (v0.3); TUI, Grafana export (v0.4).
+Live underlying feed, recorded GIF (v0.3); TUI, Grafana export (v0.4).
