@@ -203,6 +203,12 @@ runs through the same blotter schema and history CSV from local, gitignored file
 
 ## Companion repos
 
+[pricers](https://github.com/charlieyanhx/pricers) — option pricers validated against closed forms and QuantLib ·
+[riskkit](https://github.com/charlieyanhx/riskkit) — VaR/ES, backtests with known size and power, SPAN margin ·
+[volsurf](https://github.com/charlieyanhx/volsurf) — implied-vol surfaces from option chains with static-arbitrage
+checks reported, not repaired ·
+[quotesim](https://github.com/charlieyanhx/quotesim) — options quoting simulator with synthetic flow and an exact
+P&L attribution ·
 [tcakit](https://github.com/charlieyanhx/tcakit) — transaction cost analysis and market
 impact ·
 [quant-research-agent](https://github.com/charlieyanhx/quant-research-agent) — a backtest
