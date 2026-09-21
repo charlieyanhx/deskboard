@@ -59,7 +59,7 @@ class Tape:
         out = []
         for key, q in self.last_quote.items():
             b, a = q.get("bid"), q.get("ask")
-            out.append({"contract": key, "bid": b, "ask": a, "spread": (a - b) if (a is not None and b is not None) else None,
+            out.append({"contract": key, "bid": b, "ask": a, "spread": round(a - b, 4) if (a is not None and b is not None) else None,
                         "age_s": now - q["ts"], "sec_type": q["sec_type"]})
         return sorted(out, key=lambda r: (r["sec_type"] != "STK", r["contract"]))
 
