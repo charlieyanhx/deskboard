@@ -56,9 +56,14 @@ def build_desk(session_path: str, speed: float, blotter: list[dict] | None = Non
 
 
 def build(session_path: str, speed: float, blotter: list[dict] | None = None, period_ms: int = 500,
-          telegram: bool = False, shared=None, history: str | None = None):
+          telegram: bool = False, shared=None, history: str | None = None, extra_tabs=None, slow_refresh_s: float = 30.0):
     """One browser session's widgets. `shared` = (desk, feed, bot) from build_desk; when None
-    (tests, notebooks) a private desk is built and its feed started on this session's load."""
+    (tests, notebooks) a private desk is built and its feed started on this session's load.
+
+    ``extra_tabs`` is the plugin surface: a list of ``(name, panel, refresh)`` where ``refresh``
+    is a no-argument callable that re-reads whatever the page is built on and repaints. Extra
+    pages go in front of the built-in ones, are refreshed once at load, every ``slow_refresh_s``
+    after that (files change per snap, not per tick), and whenever the header ↻ is pressed."""
     desk, feed, bot = shared if shared is not None else build_desk(session_path, speed, blotter, telegram)
     bus, book = desk.bus, desk.book
 
@@ -154,6 +159,23 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
                           f"**bus dispatch latency** p50 {lat['p50']:.2f} ms · p99 {lat['p99']:.2f} ms · max {lat.get('max', float('nan')):.2f} ms"
                           + (f"\n\n**telegram** chat {bot.chat_id} · {bot.sent} sent · {bot.failed} failed" if bot else ""))
 
+    extra = list(extra_tabs or [])
+
+    def refresh_extra():
+        for name, _panel, fn in extra:
+            try:
+                fn()
+            except Exception as exc:  # noqa: BLE001 — one page's failure must not stop the others
+                import logging
+                logging.getLogger("deskboard.ui").warning("page %s refresh failed: %s", name, exc)
+
+    tick = {"n": 0}
+
+    def refresh_extra_slow():
+        tick["n"] += 1
+        if tick["n"] == 1 or tick["n"] % max(1, int(slow_refresh_s * 1000 / period_ms)) == 0:
+            refresh_extra()
+
     def start():
         if shared is None:  # private desk: this session owns the feed
             loop = asyncio.get_event_loop()
@@ -161,7 +183,10 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
             if bot is not None:
                 loop.create_task(bot.poll())
         refresh()
+        refresh_extra_slow()
         pn.state.add_periodic_callback(refresh, period=period_ms)
+        if extra:
+            pn.state.add_periodic_callback(refresh_extra_slow, period=period_ms)
 
     pn.state.onload(start)
 
@@ -184,13 +209,25 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
         f"`{r.name}`: {r.scope} {r.metric} {'>' if r.op == 'max' else '<'} {r.bound:,.0f}" for r in desk.limits.rules))
     alertsp = pn.Column(rules_md, alert_table, sizing_mode="stretch_width")
 
-    tabs = pn.Tabs(("Risk", risk), ("P&L", pnl), ("Scenarios", scen), ("Execution", execp), ("Health", healthp),
-                   ("Alerts", alertsp), ("Legs", legs), ("Feed", feedp))
+    tabs = pn.Tabs(*[(n, p) for n, p, _ in extra], ("Risk", risk), ("P&L", pnl), ("Scenarios", scen), ("Execution", execp),
+                   ("Health", healthp), ("Alerts", alertsp), ("Legs", legs), ("Feed", feedp))
     names = list(tabs._names)
     want = (pn.state.session_args.get("tab", [b""])[0].decode() if pn.state.session_args else "")
     if want in names:                       # ?tab=Health opens on that page (wall monitors, screenshots)
         tabs.active = names.index(want)
-    tmpl = pn.template.FastListTemplate(title="deskboard", sidebar=[], theme_toggle=False, accent="#2458a6", main=[tabs])
+    # Header ↻: repaint every page from its source now, without a browser reload (a reload
+    # would drop the websocket session and its replay position).
+    refresh_btn = pn.widgets.Button(name="↻ refresh", button_type="light", width=110)
+    refresh_note = pn.pane.Markdown("", margin=(8, 4), styles={"color": "white"})
+
+    def manual_refresh(*_):
+        refresh()
+        refresh_extra()
+        refresh_note.object = f"refreshed {datetime.now(tz=timezone.utc):%H:%M:%S} UTC"
+
+    refresh_btn.on_click(manual_refresh)
+    tmpl = pn.template.FastListTemplate(title="deskboard", sidebar=[], theme_toggle=False, accent="#2458a6", main=[tabs],
+                                        header=[pn.Row(refresh_btn, refresh_note)])
     return tmpl, desk, feed
 
 
@@ -249,21 +286,45 @@ class _health_page(pn.Column):
 
 
 def serve(session_path: str, speed: float, port: int = 5006, show: bool = False, blotter: list[dict] | None = None,
-          telegram: bool = False, history: str | None = None):
+          telegram: bool = False, history: str | None = None, extra_tabs_factory=None, exit_on_feed_end: bool = False):
+    """``extra_tabs_factory``: no-arg callable returning ``build``'s ``extra_tabs`` for one browser
+    session (called per session, so widgets are not shared across tabs). ``exit_on_feed_end``: a
+    feed that finishes or dies takes the process down (exit 3) so a container restart policy brings
+    it back against a fresh source — for a live connector; a replay simply ends."""
     shared = build_desk(session_path, speed, blotter, telegram)
     desk, feed, bot = shared
 
     def make():
-        tmpl, *_ = build(session_path, speed, blotter=blotter, telegram=telegram, shared=shared, history=history)
+        tmpl, *_ = build(session_path, speed, blotter=blotter, telegram=telegram, shared=shared, history=history,
+                         extra_tabs=extra_tabs_factory() if extra_tabs_factory else None)
         return tmpl
 
     def start_tasks():
         loop = asyncio.get_event_loop()
-        loop.create_task(feed.run())
+
+        async def run_feed():
+            try:
+                await feed.run()
+            except Exception as exc:  # noqa: BLE001
+                if exit_on_feed_end:
+                    import logging
+                    logging.getLogger("deskboard").critical("feed died: %s — exiting for restart", exc)
+                    os._exit(3)
+                raise
+            if exit_on_feed_end:
+                os._exit(3)
+
+        loop.create_task(run_feed())
         if bot is not None:
             loop.create_task(bot.poll())
             print(f"telegram: pushing alerts to chat {bot.chat_id}; commands /risk /pnl /positions /alerts")
 
-    server = pn.serve(make, port=port, show=show, title="deskboard", autoreload=False, start=False)
+    # Bokeh only accepts websocket upgrades whose Origin is allow-listed. DESKBOARD_ORIGINS adds
+    # the public hostname when a reverse proxy (TLS + auth) fronts the server; the bind is 0.0.0.0
+    # so a container port map or an SSH tunnel can reach it.
+    origins = [f"localhost:{port}", f"127.0.0.1:{port}"]
+    origins += [o.strip() for o in os.environ.get("DESKBOARD_ORIGINS", "").split(",") if o.strip()]
+    server = pn.serve(make, port=port, address="0.0.0.0", show=show, title="deskboard", autoreload=False, start=False,
+                      websocket_origin=origins)
     server.io_loop.add_callback(start_tasks)
     server.io_loop.start()
