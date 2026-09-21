@@ -17,9 +17,20 @@ jobs:
       - run: python -m pip install -e ".[dev]"
       - run: ruff check src tests
       - run: pytest -q
-      # the committed demo session must regenerate byte-identically, and replay to the committed hash
+      # the committed demo session must regenerate with identical content, and replay to the
+      # committed hash. The parquet is compared as a frame, not as bytes: its footer embeds the
+      # pandas and pyarrow versions (pandas 3.0.5 -> 3.0.6 changed the bytes on 2026-09-21 with
+      # no change in the rows); the text files are compared byte for byte
       - run: |
+          git show HEAD:data/demo/session_2026-06-15.parquet > /tmp/committed.parquet
           deskboard record
-          git diff --exit-code -- data/demo
+          git diff --exit-code -- data/demo/blotter.json data/demo/pnl_history.csv data/demo/STATE_HASH
+          python - <<'PY'
+          import pandas as pd
+          a = pd.read_parquet("/tmp/committed.parquet")
+          b = pd.read_parquet("data/demo/session_2026-06-15.parquet")
+          assert list(a.columns) == list(b.columns) and a.equals(b), "regenerated demo session differs from the committed one"
+          print(f"demo session identical: {len(b)} rows, {len(b.columns)} columns")
+          PY
           deskboard replay | tee /tmp/replay.txt
           grep -q "state hash $(cat data/demo/STATE_HASH)" /tmp/replay.txt

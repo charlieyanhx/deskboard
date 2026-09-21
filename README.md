@@ -156,7 +156,7 @@ Numbers, and a reason for each number. No AI-insight widgets.
 
 Tested:
 
-- **Determinism** — replaying the same file gives the same `Book.state_hash()` at any speed; CI regenerates the demo session byte-identically on Linux and checks the committed hash. The hash rounds to 1e-6 because raw Greeks differ across platforms in the last bits (`norm.cdf`, Brent) — measured on the first CI run, see [docs/DESIGN.md](docs/DESIGN.md).
+- **Determinism** — replaying the same file gives the same `Book.state_hash()` at any speed; CI regenerates the demo session on Linux, checks it row-for-row against the committed parquet (not byte-for-byte: the parquet footer embeds the pandas and pyarrow versions) and checks the committed hash. The hash rounds to 1e-6 because raw Greeks differ across platforms in the last bits (`norm.cdf`, Brent) — measured on the first CI run, see [docs/DESIGN.md](docs/DESIGN.md).
 - **Attribution identity** — `realized == delta + gamma + vega + theta + execution + residual` to 1e-9 for every position, including a fill on an already-marked leg and a quote with no valid implied vol (that move lands in `residual`, never nowhere).
 - **Latency budget** — bus dispatch p99 < 10 ms, measured every run.
 - **Alerts on state change only**, each with the value and the bound; hysteresis on clear; a rule set never changes the state hash.
