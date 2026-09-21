@@ -93,6 +93,21 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
     fig.yaxis.axis_label = "$"
 
     feed_md = pn.pane.Markdown("")
+    live_md = pn.pane.Markdown("")
+    topic_sel = pn.widgets.RadioButtonGroup(name="topic", options=["all", "quote", "fill", "position", "alert", "clock"], value="all")
+    tape_table = pn.widgets.Tabulator(pd.DataFrame(columns=["time", "topic", "key", "detail", "age s"]), show_index=False,
+                                      layout="fit_data_table", height=360, disabled=True, pagination=None)
+    ages_table = pn.widgets.Tabulator(pd.DataFrame(columns=["contract", "bid", "ask", "spread", "age_s"]), show_index=False,
+                                      layout="fit_data_table", height=300, disabled=True, pagination=None,
+                                      formatters={"age_s": {"type": "money", "precision": 1, "symbol": ""}})
+    spot_src = ColumnDataSource({"t": [], "mid": []})
+    spot_fig = figure(height=200, sizing_mode="stretch_width", x_axis_type="datetime", toolbar_location=None,
+                      title="underlying mid — last 600 quotes")
+    spot_fig.line("t", "mid", source=spot_src, color="#2458a6")
+    rate_src = ColumnDataSource({"topic": [], "per_min": []})
+    rate_fig = figure(x_range=[], height=180, sizing_mode="stretch_width", toolbar_location=None,
+                      title="events per minute by topic — last 5 event-clock minutes")
+    rate_fig.vbar(x="topic", top="per_min", width=0.6, source=rate_src, color="#2a7a5a")
     limits_md = pn.pane.Markdown("")
     ladder_md = pn.pane.Markdown("")
     exec_md = pn.pane.Markdown("")
@@ -153,6 +168,7 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
             exec_md.object = "**execution** no fills yet this session"
         if history:
             healthp.refresh()
+        _refresh_live()
         lat = bus.latency_ms()
         feed_md.object = (f"**replay** {os.path.basename(session_path)} at {speed}× · {feed.position:,}/{len(feed.df):,} events"
                           f"{' · done' if feed.done.is_set() else ''}\n\n"
@@ -175,6 +191,33 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
         tick["n"] += 1
         if tick["n"] == 1 or tick["n"] % max(1, int(slow_refresh_s * 1000 / period_ms)) == 0:
             refresh_extra()
+
+    def _refresh_live():
+        tp = desk.tape
+        now_ts = tp.events[-1]["ts"] if tp.events else None
+        rows = tp.recent(200, None if topic_sel.value == "all" else topic_sel.value)
+        if rows:
+            tape_table.value = pd.DataFrame([{
+                "time": datetime.fromtimestamp(r["ts"], tz=timezone.utc).strftime("%H:%M:%S.%f")[:-3], "topic": r["topic"],
+                "key": r["key"], "detail": r["detail"], "age s": round(now_ts - r["ts"], 1)} for r in rows])
+        ages = tp.quote_ages(now_ts)
+        if ages:
+            ages_table.value = pd.DataFrame(ages)[["contract", "bid", "ask", "spread", "age_s"]]
+        spots = set(book.totals()["spot"])
+        spot_rows = [r for r in tp.events if r["topic"] == "quote" and r.get("key") in spots][-600:] if spots else []
+        if spot_rows:
+            mids = [(datetime.fromtimestamp(r["ts"], tz=timezone.utc), _mid_of(r["detail"])) for r in spot_rows]
+            spot_src.data = {"t": [m[0] for m in mids], "mid": [m[1] for m in mids]}
+        rate = tp.rate(5, now_ts)
+        rate_fig.x_range.factors = list(rate)
+        rate_src.data = {"topic": list(rate), "per_min": list(rate.values())}
+        stale = [a for a in ages if a["age_s"] > 120]
+        live_md.object = (f"**live** {sum(tp.counts.values()):,} events since start · " +
+                          " · ".join(f"{k} {v:,}" for k, v in tp.counts.items()) +
+                          (f" · last event {datetime.fromtimestamp(now_ts, tz=timezone.utc):%H:%M:%S} UTC" if now_ts else "") +
+                          f" · {len(ages)} contracts quoted" + (f" · **{len(stale)} stale > 120 s**" if stale else " · all fresh"))
+
+    topic_sel.param.watch(lambda *_: _refresh_live(), "value")
 
     def start():
         if shared is None:  # private desk: this session owns the feed
@@ -205,12 +248,18 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
         "half-spread. The sum is the `execution` line of the P&L attribution. Arrival, interval VWAP and reversion benchmarks "
         "need the full order lifecycle and live in [tcakit](https://github.com/charlieyanhx/tcakit)."), sizing_mode="stretch_width")
     feedp = pn.Column(feed_md, sizing_mode="stretch_width")
+    livep = pn.Column(live_md, pn.pane.Bokeh(spot_fig), pn.Row(pn.Column(pn.pane.Markdown("### Quote ages"), ages_table),
+                      pn.Column(pn.pane.Markdown("### Rate"), pn.pane.Bokeh(rate_fig)), sizing_mode="stretch_width"),
+                      pn.Row(pn.pane.Markdown("### Tape (newest first)"), topic_sel), tape_table, pn.pane.Markdown(
+        "Every event the bus dispatched, newest first, with its age on the event clock. Quote ages are the seconds since a "
+        "contract last ticked — on a live feed a contract that stops ticking ages here before anything else notices. "
+        "Counts and rates are per topic; the underlying line is the last 600 spot quotes."), sizing_mode="stretch_width")
     rules_md = pn.pane.Markdown("**rules** " + " · ".join(
         f"`{r.name}`: {r.scope} {r.metric} {'>' if r.op == 'max' else '<'} {r.bound:,.0f}" for r in desk.limits.rules))
     alertsp = pn.Column(rules_md, alert_table, sizing_mode="stretch_width")
 
     tabs = pn.Tabs(*[(n, p) for n, p, _ in extra], ("Risk", risk), ("P&L", pnl), ("Scenarios", scen), ("Execution", execp),
-                   ("Health", healthp), ("Alerts", alertsp), ("Legs", legs), ("Feed", feedp))
+                   ("Health", healthp), ("Alerts", alertsp), ("Legs", legs), ("Live", livep), ("Feed", feedp))
     names = list(tabs._names)
     want = (pn.state.session_args.get("tab", [b""])[0].decode() if pn.state.session_args else "")
     if want in names:                       # ?tab=Health opens on that page (wall monitors, screenshots)
@@ -229,6 +278,14 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
     tmpl = pn.template.FastListTemplate(title="deskboard", sidebar=[], theme_toggle=False, accent="#2458a6", main=[tabs],
                                         header=[pn.Row(refresh_btn, refresh_note)])
     return tmpl, desk, feed
+
+
+def _mid_of(detail: str) -> float:
+    try:
+        b, a = detail.split(" / ")
+        return (float(b) + float(a)) / 2.0
+    except (ValueError, AttributeError):
+        return float("nan")
 
 
 class _health_page(pn.Column):

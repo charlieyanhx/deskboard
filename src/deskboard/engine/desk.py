@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from ..bus import Bus, Event
 from .book import Book
 from .limits import DEMO_RULES, LimitEngine, Rule
+from .tape import Tape
 
 
 @dataclass
@@ -15,6 +16,7 @@ class Desk:
     book: Book
     limits: LimitEngine
     alerts: list[dict] = field(default_factory=list)
+    tape: Tape = field(default_factory=Tape)
     _last_checked_ts: float | None = None
 
     @classmethod
@@ -28,6 +30,7 @@ class Desk:
         for topic in ("quote", "position", "fill"):
             bus.subscribe(topic, desk._after_event)
         bus.subscribe("alert", lambda ev: desk.alerts.append(ev.payload))
+        desk.tape.attach(bus)          # the Live page's ring buffer; bookkeeping only
         return desk
 
     async def _after_event(self, ev: Event) -> None:

@@ -211,7 +211,7 @@ class StateFiles:
         if hist.exists():
             h = pd.read_csv(hist)
             h["date"] = pd.to_datetime(h["date"])
-            spot_col = "spot" if "spot" in h.columns else "spy"
+            spot_col = "spot" if "spot" in h.columns else h.columns[1]   # (date, <underlying>, equity)
             parts.append(h[["date", "equity", spot_col]].rename(columns={spot_col: "spot"}).assign(source="reconstructed"))
         m = self.marks()
         realized = self._realized_by_day()

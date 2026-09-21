@@ -34,7 +34,7 @@ when one lands.
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                  # 56 tests: closed-form values (incl. Hull's example), parity, finite differences, bus order, replay
+pytest -q                  # 58 tests: closed-form values (incl. Hull's example), parity, finite differences, bus order, replay
                            #   determinism, attribution identity (incl. fills and quotes without
                            #   Greeks), latency budget, limit hysteresis, Telegram bot with a fake API,
                            #   full-calendar Sharpe, drawdown identities, CUSUM false-flag rate by simulation
@@ -151,6 +151,7 @@ CUSUM's job.*
 | **Scenarios** | spot × vol ladder: full Black-Scholes revaluation of every leg at the current marks, P&L per cell, worst cell named; the zero cell is 0 by construction and the ±1 % cells reproduce Δ$ and Γ$ (tested) |
 | **Alerts** | the rules, and every BREACH / CLEARED event with its reason |
 | **Legs** | per-contract mid, implied vol, Greeks, P&L |
+| **Live** | what is coming in: the event tape newest-first (filter by topic, age on the event clock), per-contract quote ages with bid/ask/spread — a contract that stops ticking ages here before anything else notices — events per minute by topic, the underlying's last 600 quotes |
 | **Feed** | replay progress, bus dispatch latency p50 / p99 / max, Telegram sent / failed |
 
 With `--state DIR` — a strategy's **state directory** ([docs/STATE_FILES.md](docs/STATE_FILES.md):
@@ -196,7 +197,8 @@ src/deskboard/
   engine/limits.py    rules → alert events with reasons; hysteresis
   engine/scenarios.py spot × vol ladder by full revaluation; zero cell exact; missing marks named
   engine/health.py    full-calendar Sharpe (rolling), drawdown, live-vs-backtest CUSUM; load_history
-  engine/desk.py      composition root: bus + book + limits
+  engine/desk.py      composition root: bus + book + limits + tape
+  engine/tape.py      event ring buffer, per-contract quote ages, per-topic rates (the Live page)
   alerts/telegram.py  Bot API over httpx: push alerts, answer commands, allow-listed chat
   feeds/replay.py     parquet/CSV → bus at N× speed
   feeds/synth.py      seeded demo session recorder, demo blotter, demo P&L history
