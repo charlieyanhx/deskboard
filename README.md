@@ -20,7 +20,7 @@ positions, `book-vega`, `position-delta` and `position-loss` in breach, identity
 quotes / fills / positions ─► bus ─► Book (Greeks, $-Greeks, attribution) ─► snapshot ─► UI · Telegram
         ▲                             │                                          ▲
    replay file (N× speed)             └─► LimitEngine ── alert events ───────────┘
-   live connector: v0.3                   (state change only, with a reason)
+   state directory (files) ─► pages     (state change only, with a reason)
 ```
 
 **What "real-time" means here.** Every event is dispatched synchronously to the book and
@@ -34,14 +34,17 @@ when one lands.
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                  # 46 tests: closed-form values (incl. Hull's example), parity, finite differences, bus order, replay
+pytest -q                  # 56 tests: closed-form values (incl. Hull's example), parity, finite differences, bus order, replay
                            #   determinism, attribution identity (incl. fills and quotes without
                            #   Greeks), latency budget, limit hysteresis, Telegram bot with a fake API,
                            #   full-calendar Sharpe, drawdown identities, CUSUM false-flag rate by simulation
-deskboard record           # regenerate the demo session (3,503 events) and the 500-day P&L history — seeded, byte-identical
+deskboard record           # regenerate the demo session (3,503 events), the 500-day P&L history and a 30-day
+                           #   strategy state directory — seeded, byte-identical
 deskboard replay           # headless: totals, alerts, bus latency, state hash
 deskboard health           # strategy health from data/demo/pnl_history.csv (or --history yours.csv)
 deskboard serve --speed 60 # http://localhost:5006 — one trading day in ~7 minutes; ?tab=Health opens on a page
+deskboard serve --state data/demo/state   # + the strategy pages (Pace, Grid, Regime, Metrics, Fills, Reports)
+deskboard eod --state data/demo/state     # the end-of-day report for the last day, same format every day
 ```
 
 `deskboard replay` on the committed demo session prints exactly this (M-series laptop; the
@@ -150,7 +153,22 @@ CUSUM's job.*
 | **Legs** | per-contract mid, implied vol, Greeks, P&L |
 | **Feed** | replay progress, bus dispatch latency p50 / p99 / max, Telegram sent / failed |
 
-Numbers, and a reason for each number. No AI-insight widgets.
+With `--state DIR` — a strategy's **state directory** ([docs/STATE_FILES.md](docs/STATE_FILES.md):
+positions, ledger with decision quotes, marks, funnel, regime rows, persisted surfaces, a
+reference) — six more pages go in front, and Health is fed from the strategy's own equity:
+
+| Page | Content |
+|---|---|
+| **Pace** | equity vs the reference's expected pace with ±1σ/±2σ √n cones (the only honest Sharpe statement on a short sample); daily P&L per open spread vs underlying return against the reference band; the entry funnel candidates → dedupe → tickets → filled |
+| **Grid** | strike × expiry table with held legs on the delta the strategy saw, dealer GEX and DEX by strike from the persisted chain |
+| **Regime** | today's ATM IV, term slopes, skew, GEX, DEX against the history the strategy was designed on — histogram, percentile |
+| **Metrics** | P&L, realized, hit rate, σ vs reference, drawdown, Sharpe with its standard error, z vs pace — over a horizon you pick |
+| **Fills** | every fill vs its decision cross in cents (implementation shortfall), latency; the ±2 ¢ band |
+| **Reports** | one EOD report per day, same format, saveable; a trade log where a click shows the ticket's fills, quotes and notes |
+
+Numbers, and a reason for each number. No AI-insight widgets. The desk never needs the bot's
+code or its broker connection — it reads files — and a page that fails to refresh is logged,
+not fatal; the header **↻** repaints everything on demand.
 
 ## Design rules
 
@@ -183,21 +201,31 @@ src/deskboard/
   feeds/replay.py     parquet/CSV → bus at N× speed
   feeds/synth.py      seeded demo session recorder, demo blotter, demo P&L history
   feeds/blotter.py    positions from a file (demo or live-state shape)
-  ui/app.py           Panel app: Risk / P&L / Scenarios / Execution / Health / Alerts / Legs / Feed; one desk per process
-  cli.py              record · replay · serve · health · telegram-test
-data/demo/            session parquet, blotter.json, pnl_history.csv, STATE_HASH
+  feeds/statefiles.py the state-directory contract: positions, ledger, marks, funnel, regime, surfaces → frames
+  feeds/synth_state.py seeded 30-day synthetic state directory + reference + regime history
+  engine/eod_report.py end-of-day report (Markdown + JSON) from a state directory
+  ui/app.py           Panel app: Risk / P&L / Scenarios / Execution / Health / Alerts / Legs / Feed; one desk per process;
+                      build(extra_tabs=[(name, panel, refresh)]) is the plugin surface; header ↻
+  ui/pages.py         Pace / Grid / Regime / Metrics / Fills / Reports from a state directory
+  cli.py              record · replay · serve · eod · health · telegram-test
+data/demo/            session parquet, blotter.json, pnl_history.csv, STATE_HASH, state/ (30-day synthetic strategy)
+docs/STATE_FILES.md   the file contract and what each page reads
 docs/DESIGN.md        the one rule, the cross-platform finding, the CUSUM threshold, what is not done yet
 ```
 
 ## Roadmap
 
-v0.3 still open: one live underlying feed, a recorded demo. v0.4: textual TUI, Grafana export.
+v0.4 (this): the state-directory contract and its six pages, the plugin surface, `eod`, a
+reverse-proxy-ready server (`DESKBOARD_ORIGINS`, exit-on-feed-death for a container restart
+policy). Still open: a live underlying feed in this repo (the author runs one in a private
+fork against the same contract), textual TUI, Grafana export.
 
 ## Data and privacy
 
 Everything in this repo is synthetic: the demo session is generated by `deskboard record`
-from a seeded vol surface, the demo blotter is fictional, and the 500-day P&L history is
-drawn from a seeded normal with a fade written into its last 120 days. The author's live
+from a seeded vol surface, the demo blotter is fictional, the 500-day P&L history is
+drawn from a seeded normal with a fade written into its last 120 days, and the 30-day state
+directory (tickets, marks, fills, regime rows, a chain, the reference) is generated the same way. The author's live
 positions, P&L history and broker connector configuration never enter the repo; a live book
 runs through the same blotter schema and history CSV from local, gitignored files.
 

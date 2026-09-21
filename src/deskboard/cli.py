@@ -11,6 +11,7 @@ _REPO = Path(__file__).resolve().parents[2]
 _DEMO_DIR = _REPO / "data/demo" if (_REPO / "data/demo").exists() else Path("data/demo")
 DEMO = str(_DEMO_DIR / "session_2026-06-15.parquet")
 HISTORY = str(_DEMO_DIR / "pnl_history.csv")
+STATE = str(_DEMO_DIR / "state")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -31,6 +32,14 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--show", action="store_true")
     s.add_argument("--telegram", action="store_true", help="push alerts to Telegram and answer commands (env TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID)")
     s.add_argument("--history", default=HISTORY, help="daily P&L CSV (date,pnl[,backtest]) for the Health page; '' to disable")
+    s.add_argument("--state", default=None, help="a strategy STATE DIRECTORY (feeds/statefiles.py) → adds the Pace / Grid / "
+                                                 "Regime / Metrics / Fills / Reports pages; Health then comes from its daily "
+                                                 f"equity unless --history is set explicitly. Demo: --state {STATE}")
+    s.add_argument("--reports", default=None, help="writable dir for EOD reports (default: <state>/reports)")
+    e = sub.add_parser("eod", help="end-of-day report from a state directory (Markdown + JSON, same format every day)")
+    e.add_argument("--state", default=STATE)
+    e.add_argument("--date", default=None, help="YYYY-MM-DD; default: the last day with a mark or a fill")
+    e.add_argument("--out", default=None, help="write eod_<date>.md/.json here (default: print the Markdown)")
     t = sub.add_parser("telegram-test", help="send one test message to the configured chat")
     t.add_argument("--session", default=DEMO)
     h = sub.add_parser("health", help="strategy health from a daily P&L CSV: full-calendar Sharpe, drawdown, live vs backtest")
@@ -47,7 +56,10 @@ def main(argv: list[str] | None = None) -> None:
         (out_dir / "blotter.json").write_text(json.dumps(demo_blotter(), indent=1))
         hist = demo_pnl_history(seed=a.seed)
         hist.to_csv(out_dir / "pnl_history.csv", index=False)
-        print(f"wrote {len(df)} events to {a.out}, the demo blotter and {len(hist)} days of P&L history to {out_dir}/")
+        from .feeds.synth_state import demo_state
+        st = demo_state(out_dir / "state", seed=a.seed)
+        print(f"wrote {len(df)} events to {a.out}, the demo blotter, {len(hist)} days of P&L history and a "
+              f"{st['days']}-day state directory ({st['tickets']} tickets, {st['marks_rows']} mark rows) to {out_dir}/")
     elif a.cmd == "replay":
         from .engine.desk import Desk
         from .feeds.blotter import load_blotter
@@ -86,9 +98,32 @@ def main(argv: list[str] | None = None) -> None:
     elif a.cmd == "serve":
         from .feeds.blotter import load_blotter
         from .ui.app import serve
+        history = a.history or None
+        factory = None
+        if a.state:
+            from .ui.pages import build_state_tabs, pnl_history_for_health
+            reports = a.reports or str(Path(a.state) / "reports")
+            factory = lambda: build_state_tabs(a.state, reports)  # noqa: E731 — per browser session
+            if a.history == HISTORY:      # default demo history → the state's own equity instead
+                history = pnl_history_for_health(a.state, reports) or None
         serve(a.session, a.speed, port=a.port, show=a.show, blotter=load_blotter(a.blotter) if a.blotter else None,
-              history=a.history or None,
-              telegram=a.telegram)
+              history=history, telegram=a.telegram, extra_tabs_factory=factory)
+    elif a.cmd == "eod":
+        from .engine.eod_report import build_eod, render_md, report_days, write_eod
+        from .feeds.statefiles import StateFiles
+        from .feeds.synth_state import load_reference
+        files = StateFiles(a.state)
+        ref, _ = load_reference(a.state)
+        days = report_days(files)
+        if not days:
+            raise SystemExit(f"{a.state}: no marks or fills")
+        day = a.date or days[-1]
+        rep = build_eod(files, day, ref)
+        if a.out:
+            md, js = write_eod(rep, a.out)
+            print(f"wrote {md} and {js}")
+        else:
+            print(render_md(rep))
     elif a.cmd == "health":
         from .engine.health import assess, load_history
 

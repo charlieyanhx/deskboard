@@ -24,7 +24,9 @@ jobs:
       - run: |
           git show HEAD:data/demo/session_2026-06-15.parquet > /tmp/committed.parquet
           deskboard record
-          git diff --exit-code -- data/demo/blotter.json data/demo/pnl_history.csv data/demo/STATE_HASH
+          git diff --exit-code -- data/demo/blotter.json data/demo/pnl_history.csv data/demo/STATE_HASH data/demo/state
+          test -z "$(git status --porcelain data/demo/state)"   # no new or missing state files either
+          deskboard eod --state data/demo/state | head -3
           python - <<'PY'
           import pandas as pd
           a = pd.read_parquet("/tmp/committed.parquet")

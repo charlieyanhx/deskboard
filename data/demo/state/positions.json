@@ -1,0 +1,190 @@
+{
+ "positions": [
+  {
+   "pos_id": "t0031",
+   "sleeve": "A",
+   "entry_qt": "2026-06-08 10:30:00",
+   "lot_size": 1,
+   "entry_net_credit": 467.0,
+   "snaps_held": 35,
+   "hedge_shares": 0,
+   "legs": [
+    {
+     "symbol": "SYN",
+     "sec_type": "OPT",
+     "expiration": "20260716",
+     "strike": 531.0,
+     "right": "P",
+     "side": "SELL",
+     "quantity": 1.0,
+     "avg_fill_price": 6.76
+    },
+    {
+     "symbol": "SYN",
+     "sec_type": "OPT",
+     "expiration": "20260716",
+     "strike": 501.0,
+     "right": "P",
+     "side": "BUY",
+     "quantity": 1.0,
+     "avg_fill_price": 2.09
+    }
+   ]
+  },
+  {
+   "pos_id": "t0032",
+   "sleeve": "A",
+   "entry_qt": "2026-06-08 10:30:00",
+   "lot_size": 1,
+   "entry_net_credit": 433.0,
+   "snaps_held": 35,
+   "hedge_shares": 0,
+   "legs": [
+    {
+     "symbol": "SYN",
+     "sec_type": "OPT",
+     "expiration": "20260716",
+     "strike": 529.0,
+     "right": "P",
+     "side": "SELL",
+     "quantity": 1.0,
+     "avg_fill_price": 6.26
+    },
+    {
+     "symbol": "SYN",
+     "sec_type": "OPT",
+     "expiration": "20260716",
+     "strike": 499.0,
+     "right": "P",
+     "side": "BUY",
+     "quantity": 1.0,
+     "avg_fill_price": 1.93
+    }
+   ]
+  },
+  {
+   "pos_id": "t0033",
+   "sleeve": "A",
+   "entry_qt": "2026-06-11 10:30:00",
+   "lot_size": 1,
+   "entry_net_credit": 458.0,
+   "snaps_held": 14,
+   "hedge_shares": 0,
+   "legs": [
+    {
+     "symbol": "SYN",
+     "sec_type": "OPT",
+     "expiration": "20260719",
+     "strike": 536.0,
+     "right": "P",
+     "side": "SELL",
+     "quantity": 1.0,
+     "avg_fill_price": 6.51
+    },
+    {
+     "symbol": "SYN",
+     "sec_type": "OPT",
+     "expiration": "20260719",
+     "strike": 506.0,
+     "right": "P",
+     "side": "BUY",
+     "quantity": 1.0,
+     "avg_fill_price": 1.93
+    }
+   ]
+  },
+  {
+   "pos_id": "t0034",
+   "sleeve": "A",
+   "entry_qt": "2026-06-11 10:30:00",
+   "lot_size": 1,
+   "entry_net_credit": 407.0,
+   "snaps_held": 14,
+   "hedge_shares": 0,
+   "legs": [
+    {
+     "symbol": "SYN",
+     "sec_type": "OPT",
+     "expiration": "20260719",
+     "strike": 533.0,
+     "right": "P",
+     "side": "SELL",
+     "quantity": 1.0,
+     "avg_fill_price": 5.78
+    },
+    {
+     "symbol": "SYN",
+     "sec_type": "OPT",
+     "expiration": "20260719",
+     "strike": 503.0,
+     "right": "P",
+     "side": "BUY",
+     "quantity": 1.0,
+     "avg_fill_price": 1.71
+    }
+   ]
+  },
+  {
+   "pos_id": "t0035",
+   "sleeve": "A",
+   "entry_qt": "2026-06-15 10:30:00",
+   "lot_size": 1,
+   "entry_net_credit": 424.0,
+   "snaps_held": 0,
+   "hedge_shares": 0,
+   "legs": [
+    {
+     "symbol": "SYN",
+     "sec_type": "OPT",
+     "expiration": "20260723",
+     "strike": 536.0,
+     "right": "P",
+     "side": "SELL",
+     "quantity": 1.0,
+     "avg_fill_price": 5.89
+    },
+    {
+     "symbol": "SYN",
+     "sec_type": "OPT",
+     "expiration": "20260723",
+     "strike": 506.0,
+     "right": "P",
+     "side": "BUY",
+     "quantity": 1.0,
+     "avg_fill_price": 1.65
+    }
+   ]
+  },
+  {
+   "pos_id": "t0036",
+   "sleeve": "A",
+   "entry_qt": "2026-06-15 10:30:00",
+   "lot_size": 1,
+   "entry_net_credit": 375.0,
+   "snaps_held": 0,
+   "hedge_shares": 0,
+   "legs": [
+    {
+     "symbol": "SYN",
+     "sec_type": "OPT",
+     "expiration": "20260723",
+     "strike": 533.0,
+     "right": "P",
+     "side": "SELL",
+     "quantity": 1.0,
+     "avg_fill_price": 5.2
+    },
+    {
+     "symbol": "SYN",
+     "sec_type": "OPT",
+     "expiration": "20260723",
+     "strike": 503.0,
+     "right": "P",
+     "side": "BUY",
+     "quantity": 1.0,
+     "avg_fill_price": 1.45
+    }
+   ]
+  }
+ ]
+}
