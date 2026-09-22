@@ -266,14 +266,20 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
     pn.state.onload(start)
 
     risk = pn.Column(pn.Row(pnl_ind, delta_ind, gamma_ind, vega_ind, theta_ind, resid_ind, gap_ind, spot_ind), clock,
-                     limits_md, pn.pane.Markdown("### Positions"), pos_table, sizing_mode="stretch_width")
+                     limits_md, pn.pane.Markdown(
+        "Book totals and the live limit state. Per-position P&L and its attribution are on the **Positions** page."),
+        sizing_mode="stretch_width")
     scen = pn.Column(ladder_md, ladder_table, pn.pane.Markdown(
         "Rows: vol shock in vol points (added to every leg's implied vol). Columns: spot shock. Each cell reprices every leg "
         "with Black-Scholes at the shocked spot and vol, instantaneous (no time roll). The zero cell is 0 by construction; "
         "the ±1 % cells reproduce net Δ$ and Γ$ to first order (tested)."), sizing_mode="stretch_width")
-    pnl = pn.Column(pn.pane.Bokeh(fig), pn.pane.Markdown(
-        "Attribution between consecutive marks with Greeks at the old mark; **residual = P&L − Σ Greeks − execution**, "
-        "reported not hidden. Identity gap is the ledger check and must read $0.0000."), sizing_mode="stretch_width")
+    pnl = pn.Column(pn.pane.Markdown("### Positions — P&L and where it came from"), pos_table,
+                    pn.pane.Bokeh(fig), pn.pane.Markdown(
+        "One row per position: P&L today and its split into delta / gamma / vega / theta / execution / **residual**. "
+        "Attribution is taken between consecutive marks with the Greeks at the old mark; residual = P&L − Σ Greeks − "
+        "execution and is reported, never hidden — a residual that grows is a marks or Greeks problem before it is a "
+        "strategy one. The bars are the same split for the book. Identity gap must read $0.0000."),
+        sizing_mode="stretch_width")
     legs = pn.Column(leg_table, sizing_mode="stretch_width")
     execp = pn.Column(exec_md, exec_table, pn.pane.Markdown(
         "Each fill against the mid at the moment it printed, in the units tcakit reports: $ per contract and fraction of the "
@@ -290,7 +296,7 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
         f"`{r.name}`: {r.scope} {r.metric} {'>' if r.op == 'max' else '<'} {r.bound:,.0f}" for r in desk.limits.rules))
     alertsp = pn.Column(rules_md, alert_table, sizing_mode="stretch_width")
 
-    tabs = pn.Tabs(*[(n, p) for n, p, _ in extra], ("Risk", risk), ("P&L", pnl), ("Scenarios", scen), ("Execution", execp),
+    tabs = pn.Tabs(*[(n, p) for n, p, _ in extra], ("Risk", risk), ("Positions", pnl), ("Scenarios", scen), ("Execution", execp),
                    ("Health", healthp), ("Alerts", alertsp), ("Legs", legs), ("Live", livep), ("Feed", feedp))
     names = list(tabs._names)
     want = (pn.state.session_args.get("tab", [b""])[0].decode() if pn.state.session_args else "")

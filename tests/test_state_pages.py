@@ -95,3 +95,21 @@ def test_session_build_with_state_tabs_and_health_from_state(state, tmp_path):
     tmpl, *_ = build(DEMO, 1.0, shared=build_desk(DEMO, 1.0), history=hist, extra_tabs=build_state_tabs(state, tmp_path))
     names = list(tmpl.main[0]._names)
     assert names[:6] == ["Pace", "Grid", "Regime", "Metrics", "Fills", "Reports"] and "Health" in names
+
+
+def test_execution_page_compares_actual_cost_with_the_model(state, tmp_path):
+    """The Fills page must answer 'what did execution cost vs what the backtest charged':
+    modeled rows come from reference.json, actual from the ledger's decision quotes."""
+    from deskboard.ui.pages import build_state_tabs
+    tabs = dict((n, (p, r)) for n, p, r in build_state_tabs(state, tmp_path))
+    page, refresh = tabs["Fills"]
+    refresh()
+    head = page[0].object
+    assert "execution vs model" in head and "backtest charged" in head
+    cmp_tbl = page[2]
+    lines = list(cmp_tbl.value["line"])
+    assert lines[:3] == ["spread cost (vs decision cross)", "commissions", "total friction"]
+    assert cmp_tbl.value["actual"].notna().all()
+    # the synthetic generator fills exactly at the decision cross → spread cost ~0, and the
+    # comparison must still show the tape's charge as a non-zero modeled number
+    assert abs(float(cmp_tbl.value.loc[0, "actual"])) < 1.0

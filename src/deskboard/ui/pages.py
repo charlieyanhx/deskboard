@@ -484,36 +484,88 @@ def metrics_page(files: StateFiles, bands: dict):
 
 
 # ----------------------------------------------------------------------------- Execution
-def execution_page(files: StateFiles):
-    md = pn.pane.Markdown("")
+def execution_page(files: StateFiles, bands: dict | None = None):
+    """What execution actually cost, against what the backtest assumed."""
+    mod = (bands or {}).get("modeled_friction", {})
+    md = pn.pane.Markdown("", sizing_mode="stretch_width")
+    cmp_tbl = pn.widgets.Tabulator(pd.DataFrame(columns=["line", "modeled", "actual", "difference"]),
+                                   show_index=False, layout="fit_data_table", height=230, disabled=True)
     src = ColumnDataSource(dict(ts=[], slip=[], color=[], label=[], lat=[]))
-    f = figure(height=280, sizing_mode="stretch_width", x_axis_type="datetime", toolbar_location=None,
-               title="fill vs decision cross (¢, + = worse) — every fill; band = G2 bar ±2¢")
+    f = figure(height=260, sizing_mode="stretch_width", x_axis_type="datetime", toolbar_location=None,
+               title="fill vs decision cross (¢, + = worse than the backtest's assumption) — band = ±2 ¢")
     f.scatter("ts", "slip", source=src, size=10, color="color", alpha=0.9)
     for y, c in ((2, RED), (0, GREY), (-2, GREEN)):
         f.add_layout(Span(location=y, dimension="width", line_color=c, line_dash="dashed"))
     f.add_tools(HoverTool(tooltips=[("fill", "@label"), ("slip", "@slip{0.0}¢"), ("latency", "@lat ms")]))
-    tbl = pn.widgets.Tabulator(pd.DataFrame(), show_index=False, layout="fit_data_table", height=360, disabled=True)
+    src_c = ColumnDataSource(dict(n=[], cum_slip=[], cum_comm=[], cum_model=[]))
+    fc = figure(height=240, sizing_mode="stretch_width", toolbar_location=None,
+                title="cumulative execution cost ($): what we paid vs what the backtest charged")
+    fc.line("n", "cum_model", source=src_c, color=GREY, line_dash="dashed", line_width=2, legend_label="modeled (tape)")
+    fc.line("n", "cum_slip", source=src_c, color=BLUE, line_width=2, legend_label="actual spread cost")
+    fc.line("n", "cum_comm", source=src_c, color=AMBER, line_width=2, legend_label="actual commissions")
+    fc.legend.location = "top_left"
+    fc.xaxis.axis_label, fc.yaxis.axis_label = "fills", "$ cumulative"
+    tbl = pn.widgets.Tabulator(pd.DataFrame(), show_index=False, layout="fit_data_table", height=320, disabled=True)
 
     def refresh():
         q = files.fills_quality()
         if q.empty:
             md.object = "**execution** no fills in the ledger"
             return
+        led = files.ledger()
+        trades = files.trades()
+        # actual: slippage against the decision cross (the backtest's own fill assumption) and commissions
+        q = q.copy()
+        q["spread_cost"] = (q["fill"] - q["net_cross"]) * 100.0          # $ per 1-lot combo
+        comm = led.set_index("ticket_id")["commission"] if "commission" in led else pd.Series(dtype=float)
+        n_rt = int(trades["realized"].notna().sum()) if not trades.empty else 0
+        n_open = len(trades) - n_rt if not trades.empty else 0
+        tot_slip = float(q["spread_cost"].sum())
+        tot_comm = float(led["commission"].sum()) if "commission" in led else 0.0
+        # modeled: the tape's own friction, charged per leg of the lifecycle we have actually done
+        m_entry = float(mod.get("entry_half_spread_usd", np.nan))
+        m_exit = float(mod.get("exit_half_spread_usd", np.nan))
+        m_comm_rt = float(mod.get("commission_rt_usd", np.nan))
+        n_open_fills = int((led["action"] == "open").sum())
+        n_close_fills = int((led["action"] == "close").sum())
+        model_spread = m_entry * n_open_fills + m_exit * n_close_fills
+        model_comm = m_comm_rt / 2 * (n_open_fills + n_close_fills)
+        rows = [
+            ("spread cost (vs decision cross)", model_spread, tot_slip),
+            ("commissions", model_comm, tot_comm),
+            ("total friction", model_spread + model_comm, tot_slip + tot_comm),
+            ("per opening fill", m_entry + m_comm_rt / 2,
+             (q.loc[q["action"] == "open", "spread_cost"].mean() if (q["action"] == "open").any() else np.nan)
+             + (led.loc[led["action"] == "open", "commission"].mean() if n_open_fills else 0.0)),
+        ]
+        cmp_tbl.value = pd.DataFrame([dict(line=k, modeled=round(mv, 2), actual=round(av, 2),
+                                           difference=round(av - mv, 2)) for k, mv, av in rows])
         src.data = dict(ts=q["ts"], slip=q["slip_vs_cross_c"], lat=q["latency_ms"].fillna(-1),
                         color=[RED if v > 2 else (GREEN if v <= 0 else AMBER) for v in q["slip_vs_cross_c"]],
                         label=q["ticket_id"] + " " + q["action"] + " " + q["legs"])
-        recent = q.tail(20)
+        n = np.arange(1, len(q) + 1)
+        per_fill_model = np.where(q["action"].to_numpy() == "open", m_entry, m_exit)
+        src_c.data = dict(n=n, cum_slip=q["spread_cost"].cumsum(),
+                          cum_comm=(led["commission"].to_numpy()[: len(q)].cumsum() if "commission" in led else np.zeros(len(q))),
+                          cum_model=np.cumsum(per_fill_model + m_comm_rt / 2))
         tbl.value = q[["ts", "ticket_id", "sleeve", "action", "legs", "net_mid", "net_cross", "limit", "fill",
-                       "slip_vs_mid_c", "slip_vs_cross_c", "latency_ms"]].iloc[::-1]
+                       "spread_cost", "slip_vs_mid_c", "slip_vs_cross_c", "latency_ms"]].iloc[::-1]
         lat = f" · median latency {q['latency_ms'].median():.0f} ms" if q["latency_ms"].notna().any() else ""
-        md.object = (f"**execution** {len(q)} fills · mean slip vs cross **{q['slip_vs_cross_c'].mean():+.1f}¢** "
-                     f"(last 20: {recent['slip_vs_cross_c'].mean():+.1f}¢) · vs mid {q['slip_vs_mid_c'].mean():+.1f}¢ · "
-                     f"outside +2¢: {int((q['slip_vs_cross_c'] > 2).sum())}{lat}")
+        diff = (tot_slip + tot_comm) - (model_spread + model_comm)
+        md.object = (f"**execution vs model** {len(q)} fills ({n_open_fills} opens, {n_close_fills} closes; {n_rt} round "
+                     f"trips, {n_open} still open) · paid **${tot_slip + tot_comm:,.2f}**, backtest charged "
+                     f"**${model_spread + model_comm:,.2f}** → **{diff:+,.2f}** "
+                     f"({'we are cheaper than the tape' if diff < 0 else 'we are dearer than the tape'}) · "
+                     f"mean slip vs cross {q['slip_vs_cross_c'].mean():+.1f}¢ · outside +2¢: "
+                     f"{int((q['slip_vs_cross_c'] > 2).sum())}{lat}")
 
-    page = pn.Column(md, pn.pane.Bokeh(f), tbl, pn.pane.Markdown(
-        "Reference is the NBBO recorded on each leg at submission (the decision quote). A fill outside the recorded "
-        "quote means the reference was stale when the order went out — a measurement problem before an execution one."), sizing_mode="stretch_width")
+    page = pn.Column(md, pn.pane.Markdown("### Result vs expectation"), cmp_tbl,
+                     pn.pane.Bokeh(fc), pn.pane.Bokeh(f), tbl, pn.pane.Markdown(
+        "The backtest fills at the **cross** (buy the ask, sell the bid) and charges a fixed commission; those are the "
+        "'modeled' rows, applied to the fills we have actually done. 'Actual' is the same fills against the NBBO recorded "
+        "on each leg at submission. A positive difference is money the live book pays that the tape never charged — the "
+        "only execution number that can change a Sharpe. Latency is submit → fill."),
+        sizing_mode="stretch_width")
     return page, refresh
 
 
@@ -602,6 +654,6 @@ def build_state_tabs(state_dir: str | Path, reports_dir: str | Path | None = Non
     files = StateFiles(state_dir, names)
     bands, hist = load_reference(state_dir)
     pages = [("Pace", pace_page(files, bands)), ("Grid", grid_page(files)), ("Regime", regime_page(files, hist)),
-             ("Metrics", metrics_page(files, bands)), ("Fills", execution_page(files)),
+             ("Metrics", metrics_page(files, bands)), ("Fills", execution_page(files, bands)),
              ("Reports", reports_page(files, bands, Path(reports_dir) if reports_dir else None))]
     return [(name, p, r) for name, (p, r) in pages]
