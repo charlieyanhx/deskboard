@@ -37,3 +37,13 @@ def test_extra_tabs_front_and_refresh_on_header_button():
 def test_no_extra_tabs_keeps_the_built_in_order():
     tmpl, *_ = build(DEMO, 1.0, shared=build_desk(DEMO, 1.0))
     assert list(tmpl.main[0]._names) == ["Risk", "P&L", "Scenarios", "Execution", "Health", "Alerts", "Legs", "Live", "Feed"]
+
+
+def test_mobile_viewport_and_css_are_set():
+    """A desk read on a phone: the viewport meta is device-width and the narrow-screen CSS ships
+    with the template (tab strip scrolls, tables scroll inside their box)."""
+    from deskboard.ui.app import MOBILE_CSS
+    tmpl, *_ = build(DEMO, 1.0, shared=build_desk(DEMO, 1.0))
+    assert tmpl.meta_viewport.startswith("width=device-width")
+    assert MOBILE_CSS in tmpl.config.raw_css
+    assert "@media (max-width: 820px)" in MOBILE_CSS and "overflow-x: auto" in MOBILE_CSS

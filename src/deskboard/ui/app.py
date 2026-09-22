@@ -40,6 +40,24 @@ FMT.update({"delta": {"type": "money", "precision": 1, "symbol": ""}, "mid": {"t
 
 ALERT_COLS = ["time", "state", "rule", "target", "reason"]
 
+# A desk is read on a phone as often as on a monitor. Below 820 px: the tab strip scrolls
+# horizontally instead of wrapping into three lines, the indicator row wraps and shrinks,
+# and every table scrolls inside its own box so the page itself never scrolls sideways.
+MOBILE_CSS = """
+.bk-Tabs > .bk-header, .bk-tabs-header { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; }
+.bk-Tabs > .bk-header::-webkit-scrollbar { height: 3px; }
+.tabulator { max-width: 100%; }
+@media (max-width: 820px) {
+  .bk-Tabs > .bk-header .bk-tab, .bk-tabs-header .bk-tab { padding: 6px 10px; font-size: 13px; white-space: nowrap; }
+  .pn-indicator-number, .bk-clearfix + div .value { font-size: 20px !important; }
+  div[class*="indicator"] { min-width: 120px !important; }
+  .bk-panel-models-layout-Column, .bk-panel-models-layout-Row { max-width: 100vw; }
+  .tabulator, .bk-panel-models-tabulator-DataTabulator { overflow-x: auto !important; font-size: 12px; }
+  .bk-panel-models-markup-HTML, .markdown { font-size: 13px; line-height: 1.45; }
+  #header .bk-Row { gap: 4px; }
+}
+"""
+
 
 def build_desk(session_path: str, speed: float, blotter: list[dict] | None = None, telegram: bool = False):
     """The process-level state: desk (bus + book + limits), replay feed, optional bot."""
@@ -276,7 +294,9 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
 
     refresh_btn.on_click(manual_refresh)
     tmpl = pn.template.FastListTemplate(title="deskboard", sidebar=[], theme_toggle=False, accent="#2458a6", main=[tabs],
-                                        header=[pn.Row(refresh_btn, refresh_note)])
+                                        header=[pn.Row(refresh_btn, refresh_note)],
+                                        meta_viewport="width=device-width, initial-scale=1, viewport-fit=cover")
+    tmpl.config.raw_css = [MOBILE_CSS]
     return tmpl, desk, feed
 
 
