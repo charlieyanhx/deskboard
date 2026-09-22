@@ -82,7 +82,7 @@ def test_eod_report_round_trip(state, tmp_path):
 
 def test_pages_build_and_refresh_headless(state, tmp_path):
     tabs = build_state_tabs(state, tmp_path / "reports")
-    assert [n for n, _, _ in tabs] == ["Pace", "Grid", "Regime", "Metrics", "Fills", "Reports"]
+    assert [n for n, _, _ in tabs] == ["Pace", "Grid", "Regime", "Metrics", "Model", "Fills", "Reports"]
     for _, _, refresh in tabs:
         refresh()
     heads = {n: p[0].object if hasattr(p[0], "object") else "" for n, p, _ in tabs}
@@ -94,7 +94,7 @@ def test_session_build_with_state_tabs_and_health_from_state(state, tmp_path):
     hist = pnl_history_for_health(state, tmp_path)
     tmpl, *_ = build(DEMO, 1.0, shared=build_desk(DEMO, 1.0), history=hist, extra_tabs=build_state_tabs(state, tmp_path))
     names = list(tmpl.main[0]._names)
-    assert names[:6] == ["Pace", "Grid", "Regime", "Metrics", "Fills", "Reports"] and "Health" in names
+    assert names[:7] == ["Pace", "Grid", "Regime", "Metrics", "Model", "Fills", "Reports"] and "Health" in names
 
 
 def test_execution_page_compares_actual_cost_with_the_model(state, tmp_path):
@@ -113,3 +113,18 @@ def test_execution_page_compares_actual_cost_with_the_model(state, tmp_path):
     # the synthetic generator fills exactly at the decision cross → spread cost ~0, and the
     # comparison must still show the tape's charge as a non-zero modeled number
     assert abs(float(cmp_tbl.value.loc[0, "actual"])) < 1.0
+
+
+def test_model_page_buckets_live_against_the_reference(state, tmp_path):
+    """Actual vs modeled by condition: every row pairs a live bucket mean with the reference's
+    mean for the same bucket, and states how many live observations stand behind it."""
+    from deskboard.ui.pages import build_state_tabs
+    page, refresh = dict((n, (p, r)) for n, p, r in build_state_tabs(state, tmp_path))["Model"]
+    refresh()
+    head = page[0].object
+    assert "model vs actual by condition" in head or "no live observation" in head
+    df = page[1].value
+    if len(df):
+        assert {"dim", "bucket", "n_live", "actual", "modeled", "difference"} <= set(df.columns)
+        assert (df["difference"].round(2) == (df["actual"] - df["modeled"]).round(2)).all()
+        assert (df["n_live"] > 0).all()

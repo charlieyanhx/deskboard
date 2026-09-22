@@ -425,6 +425,118 @@ def regime_page(files: StateFiles, hist: pd.DataFrame | None):
     return page, refresh
 
 
+# ----------------------------------------------------------------------------- Model
+BUCKETERS = {
+    "term structure": ("slope", lambda v: "backwardation (slope>0 front-30)" if v is not None and v == v and v > 0 else "contango"),
+    "ATM IV": ("atm_iv", lambda v: None if v != v else ("low IV (<13)" if v < 0.13 else "mid IV (13-18)" if v < 0.18 else "high IV (>18)")),
+    "SPY day": ("spot_ret", lambda v: None if v != v else ("<-0.75%" if v < -0.0075 else "-0.75..-0.25%" if v < -0.0025
+                                                           else "flat ±0.25%" if v < 0.0025 else "+0.25..+0.75%" if v < 0.0075 else ">+0.75%")),
+}
+
+
+def model_page(files: StateFiles, bands: dict):
+    """Actual vs modeled, conditioned on the state the trade or the day was in.
+
+    The reference carries the backtest's mean per open spread per day and per closed trade in
+    each condition bucket; the live book is bucketed the same way from its own regime rows and
+    marks, so the comparison is like for like. Small n is stated, never hidden: with a handful
+    of live days most cells are one or two observations and the difference column is noise.
+    """
+    cond = pd.DataFrame(bands.get("conditional", []))
+    md = pn.pane.Markdown("", sizing_mode="stretch_width")
+    tbl = pn.widgets.Tabulator(pd.DataFrame(), show_index=False, layout="fit_data_table", height=430, disabled=True,
+                               groupby=["dim"])
+    from bokeh.transform import dodge
+    src = ColumnDataSource(dict(label=[], actual=[], modeled=[], color=[]))
+    fig_ = figure(y_range=[], height=380, sizing_mode="stretch_width", toolbar_location=None,
+                  title="actual vs modeled by condition ($ per open spread per day)")
+    fig_.hbar(y=dodge("label", 0.18, range=fig_.y_range), right="modeled", height=0.32, source=src, color=GREY,
+              alpha=0.55, legend_label="modeled (tape)")
+    fig_.hbar(y=dodge("label", -0.18, range=fig_.y_range), right="actual", height=0.32, source=src, color="color",
+              legend_label="actual (live)")
+    fig_.add_layout(Span(location=0, dimension="height", line_color="#222"))
+    fig_.legend.location = "bottom_right"
+    fig_.add_tools(HoverTool(tooltips=[("bucket", "@label"), ("actual", "@actual{$0,0.00}"), ("modeled", "@modeled{$0,0.00}")]))
+
+    def refresh():
+        if cond.empty:
+            md.object = "**model** the reference carries no conditional rows (`conditional` in reference.json)"
+            return
+        eq = files.daily_equity()
+        reg = files.regime()
+        trades = files.trades()
+        if eq.empty:
+            md.object = "**model** no marks yet"
+            return
+        n_open = files.open_count_by_day(eq["date"])
+        day = eq.set_index("date")
+        day["n_open"] = n_open.to_numpy()
+        day["per_spread"] = day["daily_pnl"] / day["n_open"].where(day["n_open"] > 0, np.nan)
+        if not reg.empty:
+            r = reg.assign(date=reg["qt"].dt.normalize()).sort_values("qt").groupby("date").last()
+            day = day.join(r[[c for c in ("slope", "term_slope_front", "atm_iv") if c in r]], how="left")
+            if "term_slope_front" in day and "slope" not in day:
+                day["slope"] = day["term_slope_front"]
+        rows = []
+        for dim, (col, fn) in BUCKETERS.items():
+            if col not in day.columns and col != "spot_ret":
+                continue
+            v = day[col] if col in day.columns else day["spot_ret"]
+            day["_b"] = [fn(x) for x in v]
+            for bucket, g in day.dropna(subset=["per_spread"]).groupby("_b"):
+                mrow = cond[(cond["dim"] == dim) & (cond["bucket"] == bucket)]
+                if mrow.empty:
+                    continue
+                rows.append(dict(dim=dim, bucket=bucket, unit="$/open spread/day", n_live=len(g),
+                                 actual=round(float(g["per_spread"].mean()), 2),
+                                 modeled=float(mrow["modeled_mean"].iloc[0]),
+                                 difference=round(float(g["per_spread"].mean()) - float(mrow["modeled_mean"].iloc[0]), 2),
+                                 n_model=int(mrow["n"].iloc[0])))
+        # closed trades by the regime at entry
+        if not trades.empty and trades["realized"].notna().any() and not reg.empty:
+            r = reg.assign(date=reg["qt"].dt.normalize()).sort_values("qt").groupby("date").last()
+            t = trades.dropna(subset=["realized"]).copy()
+            t["date"] = pd.to_datetime(t["opened"]).dt.normalize()
+            t = t.join(r[[c for c in ("slope", "term_slope_front", "atm_iv") if c in r]], on="date")
+            if "term_slope_front" in t and "slope" not in t:
+                t["slope"] = t["term_slope_front"]
+            for dim, (col, fn) in list(BUCKETERS.items())[:2]:
+                if col not in t.columns:
+                    continue
+                t["_b"] = [fn(x) for x in t[col]]
+                for bucket, g in t.groupby("_b"):
+                    mrow = cond[(cond["dim"] == f"{dim} (at entry)") & (cond["bucket"] == bucket)]
+                    if mrow.empty:
+                        continue
+                    rows.append(dict(dim=f"{dim} (at entry)", bucket=bucket, unit="$/closed trade", n_live=len(g),
+                                     actual=round(float(g["realized"].mean()), 2),
+                                     modeled=float(mrow["modeled_mean"].iloc[0]),
+                                     difference=round(float(g["realized"].mean()) - float(mrow["modeled_mean"].iloc[0]), 2),
+                                     n_model=int(mrow["n"].iloc[0])))
+        if not rows:
+            md.object = "**model** no live observation falls in a bucket the reference covers yet"
+            return
+        df = pd.DataFrame(rows).sort_values(["unit", "dim", "bucket"])
+        tbl.value = df[["dim", "bucket", "unit", "n_live", "actual", "modeled", "difference", "n_model"]]
+        d2 = df[df["unit"] == "$/open spread/day"]
+        labels = [f"{r.dim}: {r.bucket} (n={r.n_live})" for r in d2.itertuples()]
+        fig_.y_range.factors = labels
+        src.data = dict(label=labels, actual=d2["actual"], modeled=d2["modeled"],
+                        color=[GREEN if a >= m else RED for a, m in zip(d2["actual"], d2["modeled"], strict=True)])
+        thin = int((df["n_live"] < 3).sum())
+        md.object = (f"**model vs actual by condition** {len(df)} buckets with live observations · "
+                     f"reference = {bands.get('source', 'reference.json')} · "
+                     f"{thin} of them have fewer than 3 live observations — read those as placeholders, not evidence")
+
+    page = pn.Column(md, tbl, pn.pane.Bokeh(fig_), pn.pane.Markdown(
+        "Each row is a condition the backtest also measured: the live book's mean in that bucket next to the tape's. "
+        "Per-day rows are dollars per **open spread** so a day with nine positions is comparable with a day with two; "
+        "per-trade rows are realised dollars per closed trade, bucketed by the regime **at entry**. Differences are "
+        "descriptive until the live counts are in the tens — the `n_live` column is the first thing to read."),
+        sizing_mode="stretch_width")
+    return page, refresh
+
+
 # ----------------------------------------------------------------------------- Metrics
 HORIZONS = {"1 week": 5, "2 weeks": 10, "1 month": 21, "3 months": 63, "all": 10 ** 6}
 
@@ -660,6 +772,7 @@ def build_state_tabs(state_dir: str | Path, reports_dir: str | Path | None = Non
     files = StateFiles(state_dir, names)
     bands, hist = load_reference(state_dir)
     pages = [("Pace", pace_page(files, bands)), ("Grid", grid_page(files)), ("Regime", regime_page(files, hist)),
-             ("Metrics", metrics_page(files, bands)), ("Fills", execution_page(files, bands)),
+             ("Metrics", metrics_page(files, bands)), ("Model", model_page(files, bands)),
+             ("Fills", execution_page(files, bands)),
              ("Reports", reports_page(files, bands, Path(reports_dir) if reports_dir else None))]
     return [(name, p, r) for name, (p, r) in pages]

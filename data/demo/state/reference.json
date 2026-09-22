@@ -12,6 +12,104 @@
   0.995,
   1.01
  ],
+ "conditional": [
+  {
+   "dim": "term structure",
+   "bucket": "backwardation (slope>0 front-30)",
+   "unit": "$ per open spread per day",
+   "n": 1800,
+   "modeled_mean": -0.2,
+   "modeled_median": 6.0
+  },
+  {
+   "dim": "term structure",
+   "bucket": "contango",
+   "unit": "$ per open spread per day",
+   "n": 2600,
+   "modeled_mean": 34.5,
+   "modeled_median": 29.8
+  },
+  {
+   "dim": "ATM IV",
+   "bucket": "low IV (<13)",
+   "unit": "$ per open spread per day",
+   "n": 900,
+   "modeled_mean": 34.7,
+   "modeled_median": 29.8
+  },
+  {
+   "dim": "ATM IV",
+   "bucket": "mid IV (13-18)",
+   "unit": "$ per open spread per day",
+   "n": 1500,
+   "modeled_mean": 29.9,
+   "modeled_median": 29.5
+  },
+  {
+   "dim": "ATM IV",
+   "bucket": "high IV (>18)",
+   "unit": "$ per open spread per day",
+   "n": 2100,
+   "modeled_mean": 6.6,
+   "modeled_median": 8.5
+  },
+  {
+   "dim": "SPY day",
+   "bucket": "<-0.75%",
+   "unit": "$ per open spread per day",
+   "n": 825,
+   "modeled_mean": -196.3,
+   "modeled_median": -150.5
+  },
+  {
+   "dim": "SPY day",
+   "bucket": "-0.75..-0.25%",
+   "unit": "$ per open spread per day",
+   "n": 710,
+   "modeled_mean": -47.9,
+   "modeled_median": -43.5
+  },
+  {
+   "dim": "SPY day",
+   "bucket": "flat \u00b10.25%",
+   "unit": "$ per open spread per day",
+   "n": 976,
+   "modeled_mean": 12.0,
+   "modeled_median": 12.5
+  },
+  {
+   "dim": "SPY day",
+   "bucket": "+0.25..+0.75%",
+   "unit": "$ per open spread per day",
+   "n": 800,
+   "modeled_mean": 68.6,
+   "modeled_median": 61.3
+  },
+  {
+   "dim": "SPY day",
+   "bucket": ">+0.75%",
+   "unit": "$ per open spread per day",
+   "n": 1183,
+   "modeled_mean": 185.6,
+   "modeled_median": 157.0
+  },
+  {
+   "dim": "term structure (at entry)",
+   "bucket": "backwardation (slope>0 front-30)",
+   "unit": "$ per trade realized",
+   "n": 376,
+   "modeled_mean": 193.5,
+   "modeled_median": 212.4
+  },
+  {
+   "dim": "term structure (at entry)",
+   "bucket": "contango",
+   "unit": "$ per trade realized",
+   "n": 477,
+   "modeled_mean": 78.8,
+   "modeled_median": 110.4
+  }
+ ],
  "modeled_friction": {
   "entry_half_spread_usd": 5.0,
   "exit_half_spread_usd": 4.0,
