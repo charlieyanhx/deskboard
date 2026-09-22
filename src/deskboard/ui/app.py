@@ -54,7 +54,9 @@ MOBILE_CSS = """
   .bk-panel-models-layout-Column, .bk-panel-models-layout-Row { max-width: 100vw; }
   .tabulator, .bk-panel-models-tabulator-DataTabulator { overflow-x: auto !important; font-size: 12px; }
   .bk-panel-models-markup-HTML, .markdown { font-size: 13px; line-height: 1.45; }
+  .bk-Figure, .bk-plot-wrapper { max-width: 100% !important; }
   #header .bk-Row { gap: 4px; }
+  #header .title { font-size: 18px; }
 }
 """
 
