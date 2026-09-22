@@ -239,17 +239,29 @@ def build(session_path: str, speed: float, blotter: list[dict] | None = None, pe
 
     topic_sel.param.watch(lambda *_: _refresh_live(), "value")
 
+    def guarded(fn, name):
+        """A refresh that raises must say so: Panel swallows exceptions in session callbacks,
+        and a silent one leaves every widget at its initial value (2026-09-22: a whole page of
+        zeros with a healthy feed behind it)."""
+        def run():
+            try:
+                fn()
+            except Exception:  # noqa: BLE001
+                import logging
+                logging.getLogger("deskboard.ui").exception("%s refresh failed", name)
+        return run
+
     def start():
         if shared is None:  # private desk: this session owns the feed
             loop = asyncio.get_event_loop()
             loop.create_task(feed.run())
             if bot is not None:
                 loop.create_task(bot.poll())
-        refresh()
-        refresh_extra_slow()
-        pn.state.add_periodic_callback(refresh, period=period_ms)
+        guarded(refresh, "desk")()
+        guarded(refresh_extra_slow, "pages")()
+        pn.state.add_periodic_callback(guarded(refresh, "desk"), period=period_ms)
         if extra:
-            pn.state.add_periodic_callback(refresh_extra_slow, period=period_ms)
+            pn.state.add_periodic_callback(guarded(refresh_extra_slow, "pages"), period=period_ms)
 
     pn.state.onload(start)
 
