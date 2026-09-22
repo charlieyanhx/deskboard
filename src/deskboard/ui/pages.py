@@ -517,17 +517,21 @@ def execution_page(files: StateFiles, bands: dict | None = None):
         # actual: slippage against the decision cross (the backtest's own fill assumption) and commissions
         q = q.copy()
         q["spread_cost"] = (q["fill"] - q["net_cross"]) * 100.0          # $ per 1-lot combo
+        stale = int((~q["fresh"]).sum()) if "fresh" in q else 0
+        if stale:                                     # measure only fills with a decision quote
+            q_all, q = q, q[q["fresh"]].copy()
         comm = led.set_index("ticket_id")["commission"] if "commission" in led else pd.Series(dtype=float)
         n_rt = int(trades["realized"].notna().sum()) if not trades.empty else 0
         n_open = len(trades) - n_rt if not trades.empty else 0
         tot_slip = float(q["spread_cost"].sum())
-        tot_comm = float(led["commission"].sum()) if "commission" in led else 0.0
+        led_m = led[led["ticket_id"].isin(q["ticket_id"]) & led["action"].isin(q["action"])] if not led.empty else led
+        tot_comm = float(led_m["commission"].sum()) if "commission" in led_m else 0.0
         # modeled: the tape's own friction, charged per leg of the lifecycle we have actually done
         m_entry = float(mod.get("entry_half_spread_usd", np.nan))
         m_exit = float(mod.get("exit_half_spread_usd", np.nan))
         m_comm_rt = float(mod.get("commission_rt_usd", np.nan))
-        n_open_fills = int((led["action"] == "open").sum())
-        n_close_fills = int((led["action"] == "close").sum())
+        n_open_fills = int((q["action"] == "open").sum())
+        n_close_fills = int((q["action"] == "close").sum())
         model_spread = m_entry * n_open_fills + m_exit * n_close_fills
         model_comm = m_comm_rt / 2 * (n_open_fills + n_close_fills)
         rows = [
@@ -536,7 +540,7 @@ def execution_page(files: StateFiles, bands: dict | None = None):
             ("total friction", model_spread + model_comm, tot_slip + tot_comm),
             ("per opening fill", m_entry + m_comm_rt / 2,
              (q.loc[q["action"] == "open", "spread_cost"].mean() if (q["action"] == "open").any() else np.nan)
-             + (led.loc[led["action"] == "open", "commission"].mean() if n_open_fills else 0.0)),
+             + (led_m.loc[led_m["action"] == "open", "commission"].mean() if n_open_fills else 0.0)),
         ]
         cmp_tbl.value = pd.DataFrame([dict(line=k, modeled=round(mv, 2), actual=round(av, 2),
                                            difference=round(av - mv, 2)) for k, mv, av in rows])
@@ -546,18 +550,20 @@ def execution_page(files: StateFiles, bands: dict | None = None):
         n = np.arange(1, len(q) + 1)
         per_fill_model = np.where(q["action"].to_numpy() == "open", m_entry, m_exit)
         src_c.data = dict(n=n, cum_slip=q["spread_cost"].cumsum(),
-                          cum_comm=(led["commission"].to_numpy()[: len(q)].cumsum() if "commission" in led else np.zeros(len(q))),
+                          cum_comm=(led_m["commission"].to_numpy()[: len(q)].cumsum() if "commission" in led_m else np.zeros(len(q))),
                           cum_model=np.cumsum(per_fill_model + m_comm_rt / 2))
         tbl.value = q[["ts", "ticket_id", "sleeve", "action", "legs", "net_mid", "net_cross", "limit", "fill",
                        "spread_cost", "slip_vs_mid_c", "slip_vs_cross_c", "latency_ms"]].iloc[::-1]
         lat = f" · median latency {q['latency_ms'].median():.0f} ms" if q["latency_ms"].notna().any() else ""
         diff = (tot_slip + tot_comm) - (model_spread + model_comm)
-        md.object = (f"**execution vs model** {len(q)} fills ({n_open_fills} opens, {n_close_fills} closes; {n_rt} round "
+        stale_txt = (f" · **{stale} earlier fills excluded**: their decision quote was the stale snap surface, "
+                     f"so slippage against it is not measurable") if stale else ""
+        md.object = (f"**execution vs model** {len(q)} measurable fills ({n_open_fills} opens, {n_close_fills} closes; {n_rt} round "
                      f"trips, {n_open} still open) · paid **${tot_slip + tot_comm:,.2f}**, backtest charged "
                      f"**${model_spread + model_comm:,.2f}** → **{diff:+,.2f}** "
                      f"({'we are cheaper than the tape' if diff < 0 else 'we are dearer than the tape'}) · "
                      f"mean slip vs cross {q['slip_vs_cross_c'].mean():+.1f}¢ · outside +2¢: "
-                     f"{int((q['slip_vs_cross_c'] > 2).sum())}{lat}")
+                     f"{int((q['slip_vs_cross_c'] > 2).sum())}{lat}{stale_txt}")
 
     page = pn.Column(md, pn.pane.Markdown("### Result vs expectation"), cmp_tbl,
                      pn.pane.Bokeh(fc), pn.pane.Bokeh(f), tbl, pn.pane.Markdown(

@@ -87,7 +87,7 @@ def test_pages_build_and_refresh_headless(state, tmp_path):
         refresh()
     heads = {n: p[0].object if hasattr(p[0], "object") else "" for n, p, _ in tabs}
     assert "z =" in heads["Pace"] and "GEX" in heads["Grid"] and "front slope says" in heads["Regime"]
-    assert "62 fills" in heads["Fills"]
+    assert "62 measurable fills" in heads["Fills"]
 
 
 def test_session_build_with_state_tabs_and_health_from_state(state, tmp_path):

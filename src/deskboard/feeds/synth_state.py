@@ -75,7 +75,7 @@ def demo_state(out_dir: str | Path, seed: int = 7, session_date: str = "2026-06-
                                      strike=lg["strike"], expiry=p["expiry"]))
                 ledger.append(dict(schema=1, event="fill", ts=f"{ds}T13:30:00", date=ds, sleeve=p["sleeve"], action="close",
                                    ticket_id=t, intended_limit=round(net + 0.02, 3), fill_net=round(net, 3), commission=1.3,
-                                   note=f"basis=cross rung=1 latency_ms={int(rng.integers(900, 6000))}", legs=legs))
+                                   note=f"fresh=2/2 basis=cross rung=1 latency_ms={int(rng.integers(900, 6000))}", legs=legs))
                 del positions[t]
         # ---- signal + entries at 10:30
         cands = int(rng.integers(0, 16))
@@ -99,7 +99,7 @@ def demo_state(out_dir: str | Path, seed: int = 7, session_date: str = "2026-06-
                 fills_ok += 1
                 ledger.append(dict(schema=1, event="fill", ts=f"{ds}T10:31:00", date=ds, sleeve=sleeve, action="open",
                                    ticket_id=t, intended_limit=round(net + 0.02, 3), fill_net=round(net, 3), commission=1.3,
-                                   note=f"basis=cross rung=1 latency_ms={int(rng.integers(900, 6000))}", legs=legs))
+                                   note=f"fresh=2/2 basis=cross rung=1 latency_ms={int(rng.integers(900, 6000))}", legs=legs))
                 positions[t] = dict(i=i, sleeve=sleeve, expiry=exp_d, credit=round(-net * 100, 2),
                                     legs=[dict(symbol=SYMBOL, sec_type="OPT", expiration=exp_c, strike=lg["strike"], right="P",
                                                side=lg["side"], quantity=1.0, avg_fill_price=lg["fill"]) for lg in legs])

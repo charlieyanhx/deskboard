@@ -196,7 +196,12 @@ class StateFiles:
                         lat = float(tok.split("=", 1)[1])
                     except ValueError:
                         pass
+            # a fill whose decision quote was not taken at submission is measured against a stale
+            # reference; the bot marks fresh ones in the note ("fresh=2/2"). Mixing the two bases
+            # makes execution look free.
+            fresh = "fresh=" in note
             rows.append(dict(ts=f["ts"], date=f["date"], ticket_id=f["ticket_id"], sleeve=f["sleeve"], action=f["action"],
+                             fresh=fresh,
                              legs=" + ".join(f"{g['side']} {g['strike']:g}{g['right']}" for g in legs),
                              net_mid=round(mid, 3), net_cross=round(cross, 3), limit=f.get("intended_limit"), fill=fill,
                              slip_vs_mid_c=round((fill - mid) * 100, 1), slip_vs_cross_c=round((fill - cross) * 100, 1),
